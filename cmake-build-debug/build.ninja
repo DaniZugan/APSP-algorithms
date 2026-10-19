@@ -169,6 +169,14 @@ build CMakeFiles/APSP.dir/GraphTools/regular.c.o: C_COMPILER__APSP_unscanned_Deb
   OBJECT_DIR = CMakeFiles/APSP.dir
   OBJECT_FILE_DIR = CMakeFiles/APSP.dir/GraphTools
 
+build CMakeFiles/APSP.dir/GraphTools/randomSCC.c.o: C_COMPILER__APSP_unscanned_Debug /Users/danizugan/CLionProjects/APSP/GraphTools/randomSCC.c || cmake_object_order_depends_target_APSP
+  DEFINES = -DBOOST_ATOMIC_DYN_LINK -DBOOST_ATOMIC_NO_LIB -DBOOST_FILESYSTEM_DYN_LINK -DBOOST_FILESYSTEM_NO_LIB -DBOOST_SYSTEM_DYN_LINK -DBOOST_SYSTEM_NO_LIB
+  DEP_FILE = CMakeFiles/APSP.dir/GraphTools/randomSCC.c.o.d
+  FLAGS = -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -fcolor-diagnostics
+  INCLUDES = -isystem /opt/homebrew/Cellar/boost/1.87.0/include
+  OBJECT_DIR = CMakeFiles/APSP.dir
+  OBJECT_FILE_DIR = CMakeFiles/APSP.dir/GraphTools
+
 
 # =============================================================================
 # Link build statements for EXECUTABLE target APSP
@@ -177,7 +185,7 @@ build CMakeFiles/APSP.dir/GraphTools/regular.c.o: C_COMPILER__APSP_unscanned_Deb
 #############################################
 # Link the executable APSP
 
-build APSP: CXX_EXECUTABLE_LINKER__APSP_Debug CMakeFiles/APSP.dir/main.cpp.o CMakeFiles/APSP.dir/Dijkstra.cpp.o CMakeFiles/APSP.dir/utils.c.o CMakeFiles/APSP.dir/graphGenerators.c.o CMakeFiles/APSP.dir/algoritms/HiddenPaths.cpp.o CMakeFiles/APSP.dir/algoritms/UniformPaths.cpp.o CMakeFiles/APSP.dir/run_algorithm.c.o CMakeFiles/APSP.dir/algoritms/Tree.cpp.o CMakeFiles/APSP.dir/algoritms/SCC.cpp.o CMakeFiles/APSP.dir/algoritms/Toroslu.cpp.o CMakeFiles/APSP.dir/algoritms/DijkstraAPSP.cpp.o CMakeFiles/APSP.dir/GraphTools/ba_graph.c.o CMakeFiles/APSP.dir/GraphTools/WorstCase.c.o CMakeFiles/APSP.dir/GraphTools/VertexRelax.c.o CMakeFiles/APSP.dir/GraphTools/regular.c.o | /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_filesystem.dylib /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_system.dylib /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_atomic.dylib
+build APSP: CXX_EXECUTABLE_LINKER__APSP_Debug CMakeFiles/APSP.dir/main.cpp.o CMakeFiles/APSP.dir/Dijkstra.cpp.o CMakeFiles/APSP.dir/utils.c.o CMakeFiles/APSP.dir/graphGenerators.c.o CMakeFiles/APSP.dir/algoritms/HiddenPaths.cpp.o CMakeFiles/APSP.dir/algoritms/UniformPaths.cpp.o CMakeFiles/APSP.dir/run_algorithm.c.o CMakeFiles/APSP.dir/algoritms/Tree.cpp.o CMakeFiles/APSP.dir/algoritms/SCC.cpp.o CMakeFiles/APSP.dir/algoritms/Toroslu.cpp.o CMakeFiles/APSP.dir/algoritms/DijkstraAPSP.cpp.o CMakeFiles/APSP.dir/GraphTools/ba_graph.c.o CMakeFiles/APSP.dir/GraphTools/WorstCase.c.o CMakeFiles/APSP.dir/GraphTools/VertexRelax.c.o CMakeFiles/APSP.dir/GraphTools/regular.c.o CMakeFiles/APSP.dir/GraphTools/randomSCC.c.o | /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_filesystem.dylib /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_system.dylib /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_atomic.dylib
   FLAGS = -g -arch arm64 -isysroot /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
   LINK_LIBRARIES = /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_filesystem.dylib  /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_system.dylib  /opt/homebrew/Cellar/boost/1.87.0/lib/libboost_atomic.dylib
   OBJECT_DIR = CMakeFiles/APSP.dir

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/types.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -38,6 +39,11 @@ int compareInts(const void* a, const void* b);
 bool contains(int* arr, int size, int value);
 char** getFilenamesInFolder(const char* folderPath, int* fileCount);
 
+bool** create2DBoolArray(int rows, int cols);
+void free2DBoolArray(bool** array, int rows);
+void print2DBoolArray(bool** matrix, int rows, int cols);
+
+double elapsed_seconds(struct timespec start, struct timespec end);
 
 typedef struct SimpleList SimpleList;
 struct SimpleList {
@@ -49,6 +55,9 @@ struct ArrayList {
     int* array;
     int size;
 };
+
+
+
 
 #ifdef __cplusplus
 }

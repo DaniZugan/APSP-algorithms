@@ -2,17 +2,38 @@
 #ifndef RUN_ALGORITHM_H
 #define RUN_ALGORITHM_H
 
-#define TESTRUNS 5 // Number of runs (on different random graph instances), returns averaged result.
+#define TESTRUNS 1 // Number of runs (on different random graph instances), returns averaged result.
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <stdbool.h>
+#include <stdio.h>
 
 typedef struct {
     char *name;
     double time;
 } Entry;
+
+typedef struct {
+    int vertices;
+    int edges;
+    double density;
+
+    int outgoingEdges;
+    int tailCount;
+    int headCount;
+
+    int wccCount;
+    int* wccHistogram;
+    int largestWCCVertices;
+    int largestWCCEdges;
+
+    int sccCount;
+    int* sccHistogram;
+    int largestSCCVertices;
+    int largestSCCEdges;
+} GraphData;
 
 typedef float**(*AlgorithmFP)(float **, int);
 
@@ -34,6 +55,11 @@ void RunSCCsTest(AlgorithmFP* algs, char** algNames);
 void RunCompleteTest(AlgorithmFP* algs, char** algNames, int unit);
 void RunGnutellaTest(AlgorithmFP* algs, char** algNames);
 void RunTxtTest(AlgorithmFP* algs, char** algNames);
+
+GraphData getGraphData(float** graph, int n);
+void writeGraphDataToCSV(FILE *csvFile, const GraphData *data);
+void writeGraphDataHeader(FILE *csvFile);
+void freeGraphData(GraphData* data);
 
 #ifdef __cplusplus
 }

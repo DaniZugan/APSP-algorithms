@@ -2,9 +2,11 @@
 #include "../graphGenerators.h"
 #include <cstring>
 #include <ctime>
+#include <cstdio>
 
 #include "../utils.h"
 #include "Tree.h"
+
 
 tEdge* EE;
 int ee;
@@ -40,16 +42,7 @@ void tEdgesToSCCs(int* sccComponent, int sccCount) {
     }
 }
 
-void tEdgesToVertexRelaxSets(int* sccComponent, int sccCount) {
-    for (int i = 0; i < ee; ++i) {
-        int t = EE[i].a;    // tail vertex
-        int h = EE[i].b;    // head vertex
-        int T = sccComponent[t]; // component of tail vertex
-        int H = sccComponent[h]; // component of head vertex
 
-
-    }
-}
 
 GraphAdjList createGraphAdjList(int size) {
     int** edges = create2DInt(size, 1);
@@ -452,7 +445,7 @@ float** SCCalgo(float** graph, int N){
     return W;
 }
 
-// relax by vertices
+// relax by vertices (naive)
 float** SCCalgo2(float** graph, int N){
     float** W = copy2DArray(graph, N);
 
@@ -470,15 +463,453 @@ float** SCCalgo2(float** graph, int N){
     return W;
 }
 
-float** SCCvertex(float** graph, int n) {
-    float** W = copy2DArray(graph, n);
-    InitAdjList(n);
-    SCCResult SCCs = findSCCs_addEdges(W, n);
-    int** SCCsGraph = tEdgesToCondenseGraph(SCCs.component, SCCs.sccCount);
-    APSPseparately(W, n, SCCs);
+// VertexRelax for second paper ----------------------------------------------------------------------------------------
+// Bridge is for information about tail and head vertices for every component
+Bridges createBridges(int N, int C) {
+
+    int** tailHead = create2DInt(N, 1);
+    int* tailOut = allocateIntArray(N,0);
+
+    int* firstTail = allocateIntArray(N,-1);
+    int* nextTail = allocateIntArray(N,-1);
+
+    bool** isTail = create2DBoolArray(C, N);
+    bool** isHead = create2DBoolArray(C, N);
+
+    int* tailCount = allocateIntArray(C, 0);
+
+    int** heads = create2DInt(N, 1);
+    int* headCount = allocateIntArray(C, 0);
+
+    Bridges B = {tailHead, tailOut, firstTail, nextTail, isTail, isHead, tailCount, heads, headCount};
+    return B;
+}
+void freeBridges(Bridges B, int N, int C) {
+    // 1. Free 2D int array (tailHead)
+    if (B.tailHead != NULL) {
+        for (int i = 0; i < N; i++) {
+            free(B.tailHead[i]); // Free inner int arrays
+        }
+        free(B.tailHead);        // Free outer pointer array
+    }
+
+    // 2. Free 1D vertex arrays
+    free(B.tailOut);
+    free(B.firstTail);
+    free(B.nextTail);
+
+    // 3. Free 2D boolean matrices (isTail & isHead)
+    if (B.isTail != NULL) {
+        for (int i = 0; i < C; i++) {
+            free(B.isTail[i]);
+        }
+        free(B.isTail);
+    }
+
+    if (B.isHead != NULL) {
+        for (int i = 0; i < C; i++) {
+            free(B.isHead[i]);
+        }
+        free(B.isHead);
+    }
+
+    // 4. Free 1D component arrays
+    free(B.tailCount);
+    for (int i = 0; i < C; i++) {
+        free(B.heads[i]);
+    }
+    free(B.heads);
+    free(B.headCount);
+}
+
+static void add(const int tail, const int head, Bridges* B, const int* scc) {
+    int comp = scc[tail];           // find tail's component
+
+    B->tailHead[tail][B->tailOut[tail]] = head; // add head to the matrix
+    B->tailOut[tail]++;               // increase counter for heads
+
+    if (!B->isTail[comp][tail])         // if we find this tail for the first time mark it and increase the counter
+    {
+        B->isTail[comp][tail] = true;
+        B->tailCount[comp]++;
+
+        int prev = B->firstTail[comp];   // find first tail in this component
+        B->firstTail[comp] = tail;       // set current tail as first one
+        B->nextTail[tail] = prev;        // and point to previous first as next
+    }
+
+    if (!B->isHead[comp][head])         // if we find this head for the first time mark it and increase the counter
+    {
+        B->isHead[comp][head] = true;
+        B->heads[comp][B->headCount[comp]] = head;
+        B->headCount[comp]++;
+    }
+}
+
+static Bridges tEdgesToVertexRelaxSets(const int* sccComponent, const int sccCount, const int N) {
+    Bridges B = createBridges(N, sccCount);
+
+    for (int i = 0; i < ee; ++i) {
+        int t = EE[i].a;    // tail vertex
+        int h = EE[i].b;    // head vertex
+        add(t, h, &B, sccComponent);
+    }
+
+    return B;
+}
+
+static void mapBack(float** W, float** SCC, int** last, int** SCClast, const int* component, const int componentSize) {
+    for (int i = 0; i < componentSize; ++i) {
+        for (int j = 0; j < componentSize; ++j) {
+            W[component[i]][component[j]] = SCC[i][j];
+            last[component[i]][component[j]] = component[SCClast[i][j]];
+        }
+    }
+}
+
+static void constructOutTree(SimpleTree* trees, int k, int t, SCCResult scc, float** W, int** last) {
+
+    int* reach = (int*)malloc(t * sizeof(int));
+    int reachSize = 0;
+    for (int i = 0; i < t; ++i) // set up tree for every vertex in reachable components
+    {
+        int d = scc.firstInComponent[i];
+        if (isfinite_cust(W[k][d]))
+        {
+            reach[reachSize++] = i; // add component to the reach array
+            while (d != -1)
+            {
+                trees[d].nextSibling = NULL;
+                trees[d].firstChild = NULL;
+                d = scc.nextInComponent[d];
+            }
+        }
+    }
+    for (int r = 0; r < reachSize; ++r) // set up tree
+    {
+        int comp = reach[r];
+        int d = scc.firstInComponent[comp];
+        while (d != -1) {
+            if (d != k) // Nothing to do for d=h
+            {
+                int parent = last[k][d];
+                if (trees[parent].firstChild == NULL)
+                    trees[parent].firstChild = &(trees[d]);
+                else
+                {
+                    trees[d].nextSibling = trees[parent].firstChild;
+                    trees[parent].firstChild = &(trees[d]);
+                }
+            }
+            d = scc.nextInComponent[d];
+        }
+    }
+    free(reach);
+}
+
+static int buildDFS(SimpleTree* outTrees, int k, TreeStack* ts, int* dfs, int* idfs, int* skip) {
+    SimpleTree* toVisit = outTrees[k].firstChild;
+    while (toVisit != NULL)
+    {
+        //add it to our stack to explore
+        TreeStack_push(ts, toVisit);
+
+        toVisit = toVisit->nextSibling;
+    }
+    // Now traverse as DFS
+    int c = 0;
+    while (ts->size != 0)
+    {
+        toVisit = TreeStack_top(ts);
+        TreeStack_pop(ts);
+        dfs[c] = toVisit->label;
+        idfs[toVisit->label] = c;
+        if (ts->size > 0)
+            skip[c] = TreeStack_top(ts)->label; // next entry on stack is where we have to skip
+        else
+            skip[c] = -1; // skip to end
+        c++;
+        toVisit = toVisit->firstChild;
+        while (toVisit != NULL)
+        {
+            //add it to our stack to explore
+            TreeStack_push(ts, toVisit);
+            toVisit = toVisit->nextSibling;
+        }
+    }
+
+    // Now fix the skip array, since it uses vertex ids, but needs dfs offsets
+    for (int v=0; v<c; v++)
+    {
+        if (skip[v] == -1)
+            skip[v] = c;
+        else
+            skip[v] = idfs[skip[v]];
+    }
+
+    return c;
+}
+
+static void separatelyTree(float** WCCgraph, int n, SCCResult scc, int** last) {
+    int size = 1 + n - scc.sccCount; // max possible size of a SCC
+    int *comp = (int *)malloc(n * sizeof(int)); // to store vertices in current SCC
+    float** SCCgraph = createGraph(size);
+    for (int K = 0; K < scc.sccCount; ++K) {
+        int vertex = scc.firstInComponent[K];
+        int sccSize = 0;
+        while (vertex != -1) {
+            comp[sccSize++] = vertex;
+            vertex = scc.nextInComponent[vertex];
+        }
+        extractSCC(WCCgraph, SCCgraph, comp, sccSize);      // get component subgraph
+        int** SCClast = VertexTree(SCCgraph, sccSize);                // solve APSP and get last of subgraph
+        mapBack(WCCgraph, SCCgraph, last, SCClast , comp, sccSize); // put results back to the main W and last
+        free2DInt(SCClast, sccSize);
+    }
+    free(comp);
+    freeGraph(SCCgraph, size);
+}
+
+static float** BridgeTree(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
+    // Initialization the same as in Tree algorithm
+    //int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
+    int* dfs = (int*)malloc(sizeof(int)*(n-1)); // DFS-order permutation of the vertices
+    int* skip = (int*)malloc(sizeof(int)*(n-1)); // Skip array to skip subtrees in the DFS traversal
+    int* idfs = (int*)malloc(sizeof(int)*n); // inverse DFS permutation, used when building skip
+    float* Wh = (float*)malloc(sizeof(float)*(n-1)); // W[k][] distances rearranged to fit permutation order
 
 
+    SimpleTree* outTrees = (SimpleTree*)malloc(sizeof(SimpleTree)*n);
+    for (int i=0; i<n; i++)
+        outTrees[i].label = i;
 
+    TreeStack ts;
+    TreeStack_create(&ts, n);
+
+    // Loop from last to first component
+    for (int t = 1; t < Scc.sccCount; ++t)
+    {
+        clock_t start = clock();
+        // Bridge step -------------------------------------------------------------------------------------------------
+        int k = B.firstTail[t];
+        while (k != -1) // for all pivot vertices
+        {
+            int s = Scc.firstInComponent[t];
+            while (s != -1) // for all sources
+            {
+                float Wsk = W[s][k];
+                for (int i = 0; i < B.tailOut[k]; ++i) // for all heads of this tail (destinations)
+                {
+                    int h = B.tailHead[k][i];
+                    if (Wsk + W[k][h] < W[s][h]) {
+                        W[s][h] = Wsk + W[k][h];
+                        last[s][h] = last[k][h];
+                    }
+                }
+                s = Scc.nextInComponent[s];
+            }
+            k = B.nextTail[k];
+        }
+        clock_t end = clock();
+        double aTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+
+        start = clock();
+        // Reduced-relaxation step -------------------------------------------------------------------------------------
+        for (int i = 0; i < B.headCount[t]; ++i)
+        {
+            int h = B.heads[t][i];              // pivots
+            constructOutTree(outTrees, h, t, Scc, W, last);
+            int c = buildDFS(outTrees, h, &ts, dfs, idfs, skip);
+
+            for (int v=0; v<c; v++)
+                Wh[v] = W[h][dfs[v]];
+
+            int s = Scc.firstInComponent[t];
+            while (s != -1)                     // sources
+            {
+                float Wsh = W[s][h];
+                if (!isfinite_cust(Wsh))
+                {
+                    printf("Something wrong because all heads should be reachable by destinations in SCCvertex.\n");
+                    printf("s: %d, h: %d", s, h);
+                    s = Scc.nextInComponent[s];
+                    continue;
+                }
+
+                float* Ws = W[s];
+
+                for (int v = 0; v < c;)
+                {
+                    int d = dfs[v];             // destinations
+                    if (Wsh + Wh[v] < Ws[d])
+                    {
+                        Ws[d] = Wsh + Wh[v];
+                        last[s][d] = last[h][d];
+
+                        v++;
+                    }
+                    else v = skip[v]; // we can skip the subtree since we didn't improve our distance
+                }
+
+                s = Scc.nextInComponent[s];
+            }
+        }
+        end = clock();
+        //double bTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        //printf("Time bridge/red-relax: %.2f ratio\n", aTime/bTime);
+    }
+
+    free(dfs);
+    free(idfs);
+    free(skip);
+    free(Wh);
+    free(outTrees);
+    TreeStack_destroy(&ts);
 
     return W;
-}
+    }
+
+static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
+    // Initialization the same as in Tree algorithm
+    //int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
+    int* dfs = (int*)malloc(sizeof(int)*(n-1)); // DFS-order permutation of the vertices
+    int* skip = (int*)malloc(sizeof(int)*(n-1)); // Skip array to skip subtrees in the DFS traversal
+    int* idfs = (int*)malloc(sizeof(int)*n); // inverse DFS permutation, used when building skip
+    float* Wh = (float*)malloc(sizeof(float)*(n-1)); // W[k][] distances rearranged to fit permutation order
+
+    SimpleTree* outTrees = (SimpleTree*)malloc(sizeof(SimpleTree)*n);
+    for (int i=0; i<n; i++)
+        outTrees[i].label = i;
+
+    TreeStack ts;
+    TreeStack_create(&ts, n);
+
+    // Loop from last to first component
+    for (int t = 1; t < Scc.sccCount; ++t)
+    {
+        clock_t start = clock();
+        // Bridge step -------------------------------------------------------------------------------------------------
+        int k = B.firstTail[t];
+        while (k != -1) // for all pivot vertices
+        {
+            int s = Scc.firstInComponent[t];
+            while (s != -1) // for all sources
+            {
+                float Wsk = W[s][k];
+                for (int i = 0; i < B.tailOut[k]; ++i) // for all heads of this tail (destinations)
+                {
+                    int h = B.tailHead[k][i];
+                    if (Wsk + W[k][h] < W[s][h]) {
+                        W[s][h] = Wsk + W[k][h];
+                        last[s][h] = last[k][h];
+                    }
+                }
+                s = Scc.nextInComponent[s];
+            }
+            k = B.nextTail[k];
+        }
+        clock_t end = clock();
+        double aTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+
+        start = clock();
+        // Reduced-relaxation step -------------------------------------------------------------------------------------
+        for (int i = 0; i < B.headCount[t]; ++i)
+        {
+            int h = B.heads[t][i];              // pivots
+            constructOutTree(outTrees, h, t, Scc, W, last);
+            int c = buildDFS(outTrees, h, &ts, dfs, idfs, skip);
+
+            for (int v=0; v<c; v++)
+                Wh[v] = W[h][dfs[v]];
+
+            int s = Scc.firstInComponent[t];
+            while (s != -1)                     // sources
+            {
+                float Wsh = W[s][h];
+                if (!isfinite_cust(Wsh))
+                {
+                    printf("Something wrong because all heads should be reachable by destinations in SCCvertex.\n");
+                    printf("s: %d, h: %d", s, h);
+                    s = Scc.nextInComponent[s];
+                    continue;
+                }
+
+                float* Ws = W[s];
+
+                for (int v = 0; v < c;)
+                {
+                    int d = dfs[v];             // destinations
+                    if (Wsh + Wh[v] < Ws[d])
+                    {
+                        Ws[d] = Wsh + Wh[v];
+                        last[s][d] = last[h][d];
+
+                        v++;
+                    }
+                    else v = skip[v]; // we can skip the subtree since we didn't improve our distance
+                }
+
+                s = Scc.nextInComponent[s];
+            }
+        }
+        end = clock();
+        //double bTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        //printf("Time bridge/red-relax: %.2f ratio\n", aTime/bTime);
+    }
+
+    free(dfs);
+    free(idfs);
+    free(skip);
+    free(Wh);
+    free(outTrees);
+    TreeStack_destroy(&ts);
+
+    return W;
+    }
+
+// algorithm
+float** SCCvertex(float** graph, int n) {
+
+    float** W = copy2DArray(graph, n);
+    int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
+    for (int i=0; i<n; i++)
+    {
+        last[i] = (int*)malloc(sizeof(int)*n);
+        for (int j=0; j<n; j++)
+        {
+            last[i][j] = i;
+        }
+    }
+
+    InitAdjList(n);
+    SCCResult SCCs = findSCCs_addEdges(W, n);
+
+    clock_t start = clock();
+    Bridges B = tEdgesToVertexRelaxSets(SCCs.component, SCCs.sccCount, n);
+    clock_t end = clock();
+    double elapsed =
+    static_cast<double>(end - start) / CLOCKS_PER_SEC;
+    //printf("B time: %.6f seconds\n", elapsed);
+
+    start = clock();
+    separatelyTree(W, n , SCCs, last); // solve APSP in each component with Tree
+    end = clock();
+    elapsed =
+    static_cast<double>(end - start) / CLOCKS_PER_SEC;
+    //printf("Sepa time: %.6f seconds\n", elapsed);
+
+    start = clock();
+    BridgeTree(SCCs, B, W, n, last); // APSP between the SCCs
+    end = clock();
+    elapsed =
+    static_cast<double>(end - start) / CLOCKS_PER_SEC;
+    //printf("Inter SCC time: %.6f seconds\n", elapsed);
+
+    freeBridges(B, n , SCCs.sccCount);
+    FreeAdjList(); freeSCCs(SCCs);
+    free2DInt(last, n);
+
+    return W;
+    }
+
+

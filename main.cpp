@@ -17,13 +17,13 @@ using namespace std;
 
 int main() {
     srand(time(NULL));
-    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCalgo, SCCalgo2
+    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCalgo, SCCvertex
     // "Uniform", "Hidden", "FW", "Dijkstra", "Tree", "Toroslu", "SCCedge", "SCCvertex"
-    //RelaxCounter rc;
-    AlgorithmFP algs[] = {floydWarshall, NULL}; // vedno dodaj null na koncu!
-    char* algNames[] = {"FW", "NULL"};
+    // RelaxCounter rc;
+    AlgorithmFP algs[] = {FastHourglassHalf, SCCalgo, SCCvertex, NULL}; // vedno dodaj null na koncu!
+    char* algNames[] = {"Tree", "SCC-edge", "SCC-vertex", "NULL"};
 
-    RunTurkTest(algs, algNames);          // ErdosRenyi
+    //RunTurkTest(algs, algNames);          // ErdosRenyi
     //RunTurk2Test(algs, algNames);         // TurkTest with extra data (sccV, sccE, wccV, wccE)
     //RunN_1Test(algs, algNames);           // CompGraph
     //RunlgNTest(algs, algNames);           // LogGraph
@@ -33,8 +33,14 @@ int main() {
     //RunGnutellaTest(algs, algNames);      // Gnutella real-world networks
     //RunTxtTest(algs, algNames);           // Reading txt file to create graphs
     //Run_BA_Test(algs, algNames);          // Barabasi-Albert
-    //Run_WorstCase_Test(algs, algNames);   // 2 SCCs with maximum outgoing edges between them
+    //Run_WorstCase_Test(algs, algNames);     // SCCs with outgoing edges between them
+    Run_RandomSizeSCC_Test(algs, algNames);
 
 
+    int n = 16;
+    float** graph = WorstCaseGraph(n, 4, 1.0, 0.1);
+    print2DGraph(graph, n);
+    freeGraph(graph,n);
+    
     return 0;
 }

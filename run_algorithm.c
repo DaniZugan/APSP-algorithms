@@ -146,6 +146,8 @@ double** ComputeAvg(double** results, int size, int totalRuns)
 	return avgResults;
 }
 
+
+
 // Tests ---------------------------------------------------------------------------------------------------------------
 // export for TurkTest
 void csvExport(double** results, int algCount, char** algNames, double factor, int n){
@@ -574,6 +576,139 @@ void RunTurk2Test(AlgorithmFP* algs, char** algNames)
             free(avgResults);
         }
     }
+}
+
+
+// GraphData -----------------------------------------------------------------------------------------------------------
+static int countOutgoingEdges(float** graph, const int n, const int* sccComponent, int *tailCount, int *headCount, int C) {
+	int outgoingEdges = 0;
+	bool* tails = (bool*)calloc(n, sizeof(bool));
+	bool** heads = (bool**)malloc(C * sizeof(bool*));
+	for (int i = 0; i < C; i++)
+		heads[i] = (bool*)calloc(n, sizeof(bool));
+
+	*tailCount = 0;
+	*headCount = 0;
+
+	for (int i = 0; i < n; ++i) {
+		for (int j = 0; j < n; ++j) {
+			if (i != j && graph[i][j] != INFINITY && sccComponent[i] != sccComponent[j])
+			{
+				outgoingEdges++;
+				if (!tails[i])
+				{
+					tails[i] = true;
+					(*tailCount)++;
+				}
+				if (!heads[sccComponent[i]][j])
+				{
+					heads[sccComponent[i]][j] = true;
+					(*headCount)++;
+				}
+			}
+		}
+	}
+
+	free(tails);
+
+	for (int i = 0; i < C; i++) free(heads[i]);
+	free(heads);
+
+	return outgoingEdges;
+}
+
+static int* SCChistogram(SCCResult SCCs, int n) {
+	int* sizes = (int*)calloc(SCCs.sccCount, sizeof(int));
+	int* histogram = (int*)calloc(n + 1, sizeof(int));
+
+	for (int i = 0; i < n; ++i) {
+		sizes[SCCs.component[i]]++;
+	}
+
+	for (int i = 0; i < SCCs.sccCount; ++i) {
+		histogram[sizes[i]]++;
+	}
+
+	free(sizes);
+	return histogram;
+}
+
+void writeGraphDataHeader(FILE *csvFile)
+{
+	fprintf(csvFile,
+			"N,"
+			"E,"
+			"density(%%),"
+			"outgoingEdges,"
+			"tails,"
+			"heads,"
+			"wccCount,"
+			"largestWCCVertices,"
+			"largestWCCEdges,"
+			"sccCount,"
+			"largestSCCVertices,"
+			"largestSCCEdges\n");
+}
+
+void writeGraphDataToCSV(FILE *csvFile, const GraphData *data)
+{
+	if (csvFile == NULL || data == NULL) {
+		return;
+	}
+
+	fprintf(csvFile, "%d,%d,%.1lf,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+			data->vertices,
+			data->edges,
+			data->density,
+			data->outgoingEdges,
+			data->tailCount,
+			data->headCount,
+			data->wccCount,
+			data->largestWCCVertices,
+			data->largestWCCEdges,
+			data->sccCount,
+			data->largestSCCVertices,
+			data->largestSCCEdges);
+}
+
+GraphData getGraphData(float** graph, int n) {
+	GraphData data;
+	data.vertices = n;
+	data.edges = countEdges(graph, n);
+	data.density = (n > 1) ? (double)data.edges / ((double)n * (double)(n - 1))*100.0 : 0.0;
+	data.wccHistogram = graphHistogram(graph, n, false);
+	data.wccCount = WCCcount(data.wccHistogram, n);
+	data.largestWCCVertices = 0;
+	float** WCCgraph = extractMaxComp(graph, data.wccHistogram, n, &data.largestWCCVertices);
+	data.largestWCCEdges = countEdges(WCCgraph, data.largestWCCVertices);
+
+	data.largestSCCVertices = 0;
+	int* largestSCC = findLargestSCC(graph, n, &data.largestSCCVertices);
+	float** SCCgraph = extractSubgraph(graph, largestSCC, data.largestSCCVertices);
+	data.largestSCCEdges = countEdges(SCCgraph, data.largestSCCVertices);
+
+	SCCResult SCCs = findSCCs(graph, n);
+	data.sccCount = SCCs.sccCount;
+	data.sccHistogram = SCChistogram(SCCs, n);
+	data.outgoingEdges = countOutgoingEdges(graph, n, SCCs.component, &data.tailCount, &data.headCount, SCCs.sccCount);
+
+	freeGraph(WCCgraph, data.largestWCCVertices);
+	freeGraph(SCCgraph, data.largestSCCVertices);
+	free(largestSCC);
+	free(SCCs.component);
+	free(SCCs.nextInComponent);
+	free(SCCs.firstInComponent);
+
+	return data;
+}
+
+void freeGraphData(GraphData* data) {
+	if (!data) return;
+
+	free(data->wccHistogram);
+	data->wccHistogram = NULL;
+	free(data->sccHistogram);
+	data->sccHistogram = NULL;
 }
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -1087,4 +1222,6 @@ void RunTxtTest(AlgorithmFP* algs, char** algNames)
 	}
 	free(files);  // Free the array
 }
+
+
 

@@ -37,7 +37,7 @@
 			{
 				"command" : 1,
 				"file" : 0,
-				"line" : 38,
+				"line" : 39,
 				"parent" : 0
 			},
 			{
@@ -200,7 +200,8 @@
 				21,
 				22,
 				24,
-				25
+				25,
+				26
 			]
 		}
 	],
@@ -262,7 +263,8 @@
 				21,
 				22,
 				24,
-				25
+				25,
+				26
 			]
 		},
 		{
@@ -428,6 +430,12 @@
 			"backtrace" : 1,
 			"compileGroupIndex" : 1,
 			"path" : "GraphTools/regular.c",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 1,
+			"compileGroupIndex" : 1,
+			"path" : "GraphTools/randomSCC.c",
 			"sourceGroupIndex" : 0
 		}
 	],

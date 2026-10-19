@@ -4,18 +4,8 @@ bool isfinite_cust(float n) { /*return n < INFTY_CMP;*/return isfinite(n); }
 double drand() { return ((double)rand())/((double)RAND_MAX); }
 float frand() {	return (float)drand(); }
 
-float** copy2DArray(float** source, int n) {
-    float** copy = (float**)malloc(sizeof(float*) * n);
-    for (int i = 0; i < n; i++) {
-        copy[i] = (float*)malloc(sizeof(float) * n);
-        // Copy each element from the source array
-        for (int j = 0; j < n; j++) {
-            copy[i][j] = source[i][j];
-        }
-    }
-    return copy;
-}
 
+// Floyd-Warshall algorithm --------------------------------------------------------------------------------------------
 float** floydWarshall(float **graph, int n) {
     float** W = copy2DArray(graph, n);
     for (int k=0; k<n; k++)
@@ -57,75 +47,35 @@ void FW(float** W, int n) {
     }
 } // overwrite
 
-void freeGraph(float** array, int rows) {
-    if (array != NULL) {
-        // Free each row
-        for (int i = 0; i < rows; i++) {
-            free(array[i]); // Free the memory for each row
-        }
-        // Free the array of pointers
-        free(array);
+// Integer Array--------------------------------------------------------------------------------------------------------
+int* allocateIntArray(int size, int initialValue) {
+    int* array = (int*)malloc(size * sizeof(int));
+    for (int i = 0; i < size; ++i) {
+        array[i] = initialValue;
     }
+    return array;
 }
-
-void free2DInt(int** array, int n) {
-    if (!array) return; // Check if array is already NULL
-
-    for (int i = 0; i < n; i++) {
-        free(array[i]); // Free each row
-    }
-    free(array); // Free the main array pointer
-}
-
-void print2DGraph(float** graph, int n) {
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            printf("%.2f ", graph[i][j]);
-        }
-        printf("\n");
-    }
-}
-
-void print2DInt(int** array, int n) {
-    for (int i = 0; i < n; i++) {
-        for (int j = 0; j < n; j++) {
-            printf("%d ", array[i][j]);
-        }
-        printf("\n");
-    }
-}
-
 void printIntArray(int* array, int n) {
     for (int i = 0; i < n; ++i) {
         printf("%d ", array[i]);
     }
     printf("\n");
 }
-
-float** createGraph(int size) {
-    // Allocate memory for a square 2D array (size x size)
-    float** array = (float**)malloc(size * sizeof(float*));
-
-    // Allocate memory for each row
-    for (int i = 0; i < size; i++) {
-        array[i] = (float*)malloc(size * sizeof(float));
-    }
-    return array;
-}
-float** createGraphAndFill(int size) {
-    // Allocate memory for a square 2D array (size x size)
-    float** array = (float**)malloc(size * sizeof(float*));
-    // Allocate memory for each row
-    for (int i = 0; i < size; i++) {
-        array[i] = (float*)malloc(size * sizeof(float));
-        for (int j = 0; j < size; j++) {
-            if (i == j) array[i][j] = 0;
-            else array[i][j] = INFINITY;
+void shuffle(int *array, int n)
+{
+    if (n > 1)
+    {
+        for (int i=n-1; i>=1; i--)
+        {
+            int j = (int)(drand()*((double)i));
+            int t = array[i];
+            array[i] = array[j];
+            array[j] = t;
         }
     }
-    return array;
 }
 
+// 2D Integer Array-----------------------------------------------------------------------------------------------------
 int** create2DInt(int n, int init) { // 0 for calloc and 1 for malloc
     if (init == 0) {
         int** arr = (int**)calloc(n, sizeof(int*)); // Allocate row pointers
@@ -159,7 +109,128 @@ int** create2DInt(int n, int init) { // 0 for calloc and 1 for malloc
         return array;
     }
 }
+void free2DInt(int** array, int n) {
+    if (!array) return; // Check if array is already NULL
 
+    for (int i = 0; i < n; i++) {
+        free(array[i]); // Free each row
+    }
+    free(array); // Free the main array pointer
+}
+void print2DInt(int** array, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("%d ", array[i][j]);
+        }
+        printf("\n");
+    }
+}
+float** copy2DArray(float** source, int n) {
+    float** copy = (float**)malloc(sizeof(float*) * n);
+    for (int i = 0; i < n; i++) {
+        copy[i] = (float*)malloc(sizeof(float) * n);
+        // Copy each element from the source array
+        for (int j = 0; j < n; j++) {
+            copy[i][j] = source[i][j];
+        }
+    }
+    return copy;
+}
+
+// 2D Boolean Array-----------------------------------------------------------------------------------------------------
+bool** create2DBoolArray(int rows, int cols) {
+    if (rows <= 0 || cols <= 0) return NULL;
+
+    // 1. Allocate array of row pointers
+    bool** matrix = malloc(rows * sizeof(bool*)); // Notice sizeof(bool*)
+    if (!matrix) return NULL;
+
+    // 2. Allocate each individual row
+    for (int i = 0; i < rows; i++) {
+        matrix[i] = calloc(cols, sizeof(bool)); // Sets all cells to 'false'
+
+        // Safety check: cleanup previously allocated rows if malloc fails mid-way
+        if (!matrix[i]) {
+            for (int j = 0; j < i; j++) {
+                free(matrix[j]);
+            }
+            free(matrix);
+            return NULL;
+        }
+    }
+
+    return matrix;
+}
+void free2DBoolArray(bool** matrix, int rows) {
+    if (!matrix) return;
+
+    for (int i = 0; i < rows; i++) {
+        free(matrix[i]); // Free each row
+    }
+    free(matrix);        // Free outer row pointers
+}
+void print2DBoolArray(bool** matrix, int rows, int cols) {
+    if (!matrix) {
+        printf("(null matrix)\n");
+        return;
+    }
+
+    printf("2D Bool Array (%dx%d):\n", rows, cols);
+
+    for (int i = 0; i < rows; i++) {
+        printf("Row %2d: ", i); // Row label
+
+        for (int j = 0; j < cols; j++) {
+            // Prints 1 for true, 0 for false
+            printf("%d ", matrix[i][j] ? 1 : 0);
+        }
+
+        printf("\n");
+    }
+}
+
+// Graph (float 2D Array)-----------------------------------------------------------------------------------------------
+float** createGraph(int size) {
+    // Allocate memory for a square 2D array (size x size)
+    float** array = (float**)malloc(size * sizeof(float*));
+
+    // Allocate memory for each row
+    for (int i = 0; i < size; i++) {
+        array[i] = (float*)malloc(size * sizeof(float));
+    }
+    return array;
+}
+void freeGraph(float** array, int rows) {
+    if (array != NULL) {
+        // Free each row
+        for (int i = 0; i < rows; i++) {
+            free(array[i]); // Free the memory for each row
+        }
+        // Free the array of pointers
+        free(array);
+    }
+}
+float** createGraphAndFill(int size) {
+    // Allocate memory for a square 2D array (size x size)
+    float** array = (float**)malloc(size * sizeof(float*));
+    // Allocate memory for each row
+    for (int i = 0; i < size; i++) {
+        array[i] = (float*)malloc(size * sizeof(float));
+        for (int j = 0; j < size; j++) {
+            if (i == j) array[i][j] = 0;
+            else array[i][j] = INFINITY;
+        }
+    }
+    return array;
+}
+void print2DGraph(float** graph, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            printf("%.2f ", graph[i][j]);
+        }
+        printf("\n");
+    }
+}
 float** extractSubgraph(float** graph, int* component, int componentSize) {
     float** subgraph = (float**)malloc(componentSize * sizeof(float*));
     for (int i = 0; i < componentSize; i++) {
@@ -169,41 +240,6 @@ float** extractSubgraph(float** graph, int* component, int componentSize) {
         }
     }
     return subgraph;
-}
-// Helper function to initialize an array dynamically
-int* allocateIntArray(int size, int initialValue) {
-    int* array = (int*)malloc(size * sizeof(int));
-    for (int i = 0; i < size; ++i) {
-        array[i] = initialValue;
-    }
-    return array;
-}
-
-bool graphCheck (float** W, float** Y, int n) {
-    bool check = true;
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            if (fabs(Y[i][j] - W[i][j]) >= 0.0001) {
-                printf("%.2f vs %.2f: [%d,%d]\n", W[i][j], Y[i][j], i, j);
-                check = false;
-            }
-        }
-    }
-    return check;
-}
-
-void shuffle(int *array, int n)
-{
-    if (n > 1)
-    {
-        for (int i=n-1; i>=1; i--)
-        {
-            int j = (int)(drand()*((double)i));
-            int t = array[i];
-            array[i] = array[j];
-            array[j] = t;
-        }
-    }
 }
 void permuteGraph(float **graph, int N) {
 
@@ -235,6 +271,19 @@ void permuteGraph(float **graph, int N) {
     freeGraph(permutedGraph, N);
     free(permutation);
 }
+bool graphCheck (float** W, float** Y, int n) {
+    bool check = true;
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            if (fabs(Y[i][j] - W[i][j]) >= 0.0001) {
+                printf("%.2f vs %.2f: [%d,%d]\n", W[i][j], Y[i][j], i, j);
+                check = false;
+            }
+        }
+    }
+    return check;
+} // checks if two graphs are the same
+
 
 // including a and b
 int randInRange(int a, int b) {
@@ -302,6 +351,12 @@ char** getFilenamesInFolder(const char* folderPath, int* fileCount) {
     closedir(dir);
     *fileCount = count;
     return filenames;
+}
+
+double elapsed_seconds(struct timespec start, struct timespec end)
+{
+    return (double)(end.tv_sec - start.tv_sec)
+         + (double)(end.tv_nsec - start.tv_nsec) / 1e9;
 }
 
 
