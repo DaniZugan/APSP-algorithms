@@ -17,11 +17,11 @@ using namespace std;
 
 int main() {
     srand(time(NULL));
-    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCalgo, SCCvertex
-    // "Uniform", "Hidden", "FW", "Dijkstra", "Tree", "Toroslu", "SCCedge", "SCCvertex"
+    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCalgo, SCCvertex, SCCvertexAdaptive
+    // "Uniform", "Hidden", "FW", "Dijkstra", "Tree", "Toroslu", "SCCedge", "SCCvertex", "SCCadaptive"
     // RelaxCounter rc;
-    AlgorithmFP algs[] = {FastHourglassHalf, SCCalgo, SCCvertex, NULL}; // vedno dodaj null na koncu!
-    char* algNames[] = {"Tree", "SCC-edge", "SCC-vertex", "NULL"};
+    AlgorithmFP algs[] = {FastHourglassHalf, SCCalgo, SCCvertex, SCCvertexAdaptive, NULL}; // vedno dodaj null na koncu!
+    char* algNames[] = {"Tree", "SCC-edge", "SCC-vertex", "SCC-vertexAdaptive", "NULL"};
 
     //RunTurkTest(algs, algNames);          // ErdosRenyi
     //RunTurk2Test(algs, algNames);         // TurkTest with extra data (sccV, sccE, wccV, wccE)

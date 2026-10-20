@@ -230,7 +230,7 @@ void Run_RandomSizeSCC_Test(AlgorithmFP* algs, char** algNames)
     printf("Running Random Size SCC test...\n");
 
     int sizes[] = {2048};
-    int comps[] = {4, 16, 128};
+    int comps[] = {4, 8, 16};
 
     double outProb[] = {0.001, 0.001, 0.01, 0.01, 0.1, 0.1, 0.5, 0.5, 1.0, 1.0};
     double inProb[] = {0.1, 0.5, 1.0};

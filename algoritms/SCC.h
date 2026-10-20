@@ -82,6 +82,7 @@ typedef struct {
 float** SCCalgo(float** graph, int N);
 float** SCCalgo2(float** graph, int N);
 float** SCCvertex(float** graph, int N);
+float** SCCvertexAdaptive(float** graph, int N);
 
 SCCResult findSCCs(float** graph, int n);
 SCCResult findSCCs_addEdges(float** graph, int n);

@@ -1,6 +1,7 @@
 #include "SCC.h"
 #include "../graphGenerators.h"
 #include <cstring>
+#include <cstdint>
 #include <ctime>
 #include <cstdio>
 
@@ -571,6 +572,8 @@ static void constructOutTree(SimpleTree* trees, int k, int t, SCCResult scc, flo
 
     int* reach = (int*)malloc(t * sizeof(int));
     int reachSize = 0;
+    trees[k].nextSibling = NULL; // root may be a tail in C_t, which is not reset below
+    trees[k].firstChild = NULL;
     for (int i = 0; i < t; ++i) // set up tree for every vertex in reachable components
     {
         int d = scc.firstInComponent[i];
@@ -593,6 +596,13 @@ static void constructOutTree(SimpleTree* trees, int k, int t, SCCResult scc, flo
             if (d != k) // Nothing to do for d=h
             {
                 int parent = last[k][d];
+                // For a tail root the path can go through another tail of C_t. Such d is not in this tree, which is
+                // fine, since that tail is a pivot itself and covers d.
+                if (parent != k && scc.component[parent] >= t)
+                {
+                    d = scc.nextInComponent[d];
+                    continue;
+                }
                 if (trees[parent].firstChild == NULL)
                     trees[parent].firstChild = &(trees[d]);
                 else
@@ -769,101 +779,271 @@ static float** BridgeTree(const SCCResult Scc, const Bridges B, float** W, const
     return W;
     }
 
-static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
-    // Initialization the same as in Tree algorithm
-    //int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
-    int* dfs = (int*)malloc(sizeof(int)*(n-1)); // DFS-order permutation of the vertices
-    int* skip = (int*)malloc(sizeof(int)*(n-1)); // Skip array to skip subtrees in the DFS traversal
-    int* idfs = (int*)malloc(sizeof(int)*n); // inverse DFS permutation, used when building skip
-    float* Wh = (float*)malloc(sizeof(float)*(n-1)); // W[k][] distances rearranged to fit permutation order
-
-    SimpleTree* outTrees = (SimpleTree*)malloc(sizeof(SimpleTree)*n);
-    for (int i=0; i<n; i++)
-        outTrees[i].label = i;
-
+// Buffers for the out-tree DFS traversal, reused for every pivot
+typedef struct {
+    SimpleTree* outTrees;
     TreeStack ts;
-    TreeStack_create(&ts, n);
+    int* dfs;     // DFS-order permutation of the vertices
+    int* skip;    // Skip array to skip subtrees in the DFS traversal
+    int* idfs;    // inverse DFS permutation, used when building skip
+    float* Wp;    // W[p][] distances rearranged to fit permutation order
+    int* headIdx; // index of a head in B.heads[t]
+} TreeBuffers;
 
-    // Loop from last to first component
-    for (int t = 1; t < Scc.sccCount; ++t)
+static void createTreeBuffers(TreeBuffers* tb, const int n) {
+    tb->outTrees = (SimpleTree*)malloc(sizeof(SimpleTree)*n);
+    for (int i=0; i<n; i++)
+        tb->outTrees[i].label = i;
+    TreeStack_create(&tb->ts, n);
+    tb->dfs = (int*)malloc(sizeof(int)*n);
+    tb->skip = (int*)malloc(sizeof(int)*n);
+    tb->idfs = (int*)malloc(sizeof(int)*n);
+    tb->Wp = (float*)malloc(sizeof(float)*n);
+    tb->headIdx = (int*)malloc(sizeof(int)*n);
+}
+
+static void freeTreeBuffers(TreeBuffers* tb) {
+    free(tb->outTrees);
+    TreeStack_destroy(&tb->ts);
+    free(tb->dfs);
+    free(tb->skip);
+    free(tb->idfs);
+    free(tb->Wp);
+    free(tb->headIdx);
+}
+
+// Builds the out-tree of pivot p over C^(<t) in DFS order and returns its size
+static int pivotTree(const int p, const int t, const SCCResult Scc, float** W, int** last, TreeBuffers* tb) {
+    constructOutTree(tb->outTrees, p, t, Scc, W, last);
+    int c = buildDFS(tb->outTrees, p, &tb->ts, tb->dfs, tb->idfs, tb->skip);
+    for (int v=0; v<c; v++)
+        tb->Wp[v] = W[p][tb->dfs[v]];
+    return c;
+}
+
+// W[s][d] = min(W[s][d], W[s][p] + W[p][d]) for d in the out-tree of p (built by pivotTree),
+// skipping subtrees whose root did not improve
+static void relaxSource(const int s, const int p, const int c, float** W, int** last, const TreeBuffers* tb) {
+    float Wsp = W[s][p];
+    if (s == p || !isfinite_cust(Wsp))
+        return;
+
+    const float* Wp = tb->Wp;
+    const int* dfs = tb->dfs;
+    const int* skip = tb->skip;
+    float* Ws = W[s];
+    for (int v = 0; v < c;)
     {
-        clock_t start = clock();
-        // Bridge step -------------------------------------------------------------------------------------------------
-        int k = B.firstTail[t];
-        while (k != -1) // for all pivot vertices
+        int d = dfs[v];             // destinations
+        if (Wsp + Wp[v] < Ws[d])
         {
-            int s = Scc.firstInComponent[t];
-            while (s != -1) // for all sources
-            {
-                float Wsk = W[s][k];
-                for (int i = 0; i < B.tailOut[k]; ++i) // for all heads of this tail (destinations)
-                {
-                    int h = B.tailHead[k][i];
-                    if (Wsk + W[k][h] < W[s][h]) {
-                        W[s][h] = Wsk + W[k][h];
-                        last[s][h] = last[k][h];
-                    }
-                }
-                s = Scc.nextInComponent[s];
-            }
-            k = B.nextTail[k];
+            Ws[d] = Wsp + Wp[v];
+            last[s][d] = last[p][d];
+            v++;
         }
-        clock_t end = clock();
-        double aTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+        else v = skip[v]; // we can skip the subtree since we didn't improve our distance
+    }
+}
 
-        start = clock();
-        // Reduced-relaxation step -------------------------------------------------------------------------------------
-        for (int i = 0; i < B.headCount[t]; ++i)
+// Reduced relaxation from all sources in C_t via pivot p to all destinations reachable from p
+static void relaxViaPivot(const int p, const int t, const SCCResult Scc, float** W, int** last, TreeBuffers* tb) {
+    int c = pivotTree(p, t, Scc, W, last, tb);
+    if (c == 0)
+        return;
+    for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s]) // sources
+        relaxSource(s, p, c, W, last, tb);
+}
+
+// Paper order: bridge step (sources -> heads over Out(C_t)), then reduced relaxation from sources via heads
+static void bridgeThenHeads(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb) {
+    // Bridge step: W[s][h] = min(W[s][h], W[s][k] + w(k,h)) -------------------------------------------------------
+    int k = B.firstTail[t];
+    while (k != -1) // for all tails
+    {
+        int s = Scc.firstInComponent[t];
+        while (s != -1) // for all sources
         {
-            int h = B.heads[t][i];              // pivots
-            constructOutTree(outTrees, h, t, Scc, W, last);
-            int c = buildDFS(outTrees, h, &ts, dfs, idfs, skip);
-
-            for (int v=0; v<c; v++)
-                Wh[v] = W[h][dfs[v]];
-
-            int s = Scc.firstInComponent[t];
-            while (s != -1)                     // sources
+            float Wsk = W[s][k];
+            for (int i = 0; i < B.tailOut[k]; ++i) // for all heads of this tail
             {
-                float Wsh = W[s][h];
-                if (!isfinite_cust(Wsh))
-                {
-                    printf("Something wrong because all heads should be reachable by destinations in SCCvertex.\n");
-                    printf("s: %d, h: %d", s, h);
-                    s = Scc.nextInComponent[s];
-                    continue;
+                int h = B.tailHead[k][i];
+                if (Wsk + W[k][h] < W[s][h]) {
+                    W[s][h] = Wsk + W[k][h];
+                    last[s][h] = last[k][h];
                 }
-
-                float* Ws = W[s];
-
-                for (int v = 0; v < c;)
-                {
-                    int d = dfs[v];             // destinations
-                    if (Wsh + Wh[v] < Ws[d])
-                    {
-                        Ws[d] = Wsh + Wh[v];
-                        last[s][d] = last[h][d];
-
-                        v++;
-                    }
-                    else v = skip[v]; // we can skip the subtree since we didn't improve our distance
-                }
-
-                s = Scc.nextInComponent[s];
             }
+            s = Scc.nextInComponent[s];
         }
-        end = clock();
-        //double bTime = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-        //printf("Time bridge/red-relax: %.2f ratio\n", aTime/bTime);
+        k = B.nextTail[k];
     }
 
-    free(dfs);
-    free(idfs);
-    free(skip);
-    free(Wh);
-    free(outTrees);
-    TreeStack_destroy(&ts);
+    // Reduced-relaxation step: from all sources via heads to all reachable destinations ----------------------------
+    for (int i = 0; i < B.headCount[t]; ++i)
+        relaxViaPivot(B.heads[t][i], t, Scc, W, last, tb);
+}
 
+#ifndef TREE_MIN_TAILS
+#define TREE_MIN_TAILS 4 // heads with at most this many tails are relaxed without building their out-tree
+#endif
+
+// Swapped order: tails get distances to C^(<t) through their outgoing edges, then reduced relaxation via tails
+static void tailsThenBridge(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb) {
+    // Step 1: W[k][d] = min(W[k][d], w(k,h) + W[h][d]) ------------------------------------------------------------
+    // Edges are grouped by head, so the out-tree of every head is built once and walked for each of its tails
+    const int H = B.headCount[t];
+    int* start = (int*)calloc(H + 1, sizeof(int)); // tails of head i are inTails[start[i] .. start[i+1])
+    for (int i = 0; i < H; ++i)
+        tb->headIdx[B.heads[t][i]] = i;
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        for (int i = 0; i < B.tailOut[k]; ++i)
+            start[tb->headIdx[B.tailHead[k][i]] + 1]++;
+    for (int i = 0; i < H; ++i)
+        start[i + 1] += start[i];
+
+    int* pos = (int*)malloc(sizeof(int)*(H + 1));
+    memcpy(pos, start, sizeof(int)*(H + 1));
+    int* inTails = (int*)malloc(sizeof(int)*(start[H] + 1));
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        for (int i = 0; i < B.tailOut[k]; ++i)
+            inTails[pos[tb->headIdx[B.tailHead[k][i]]]++] = k;
+
+    for (int i = 0; i < H; ++i)
+    {
+        int h = B.heads[t][i];
+        if (start[i + 1] - start[i] > TREE_MIN_TAILS) // the out-tree pays off only when many tails share this head
+        {
+            int c = pivotTree(h, t, Scc, W, last, tb);
+            for (int j = start[i]; j < start[i + 1]; ++j)
+                relaxSource(inTails[j], h, c, W, last, tb);
+            continue;
+        }
+
+        const float* Wh = W[h];
+        for (int j = start[i]; j < start[i + 1]; ++j)
+        {
+            int k = inTails[j];
+            float* Wk = W[k];
+            float Wkh = Wk[h];
+            for (int c = 0; c <= Scc.component[h]; ++c) // only components below h can be reachable from h
+            {
+                int d = Scc.firstInComponent[c];
+                if (!isfinite_cust(Wh[d]))
+                    continue;
+                for (; d != -1; d = Scc.nextInComponent[d])
+                {
+                    if (Wkh + Wh[d] < Wk[d])
+                    {
+                        Wk[d] = Wkh + Wh[d];
+                        last[k][d] = last[h][d];
+                    }
+                }
+            }
+        }
+    }
+    free(inTails);
+    free(pos);
+    free(start);
+
+    // Step 2: from all sources via tails to all reachable destinations ----------------------------------------------
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        relaxViaPivot(k, t, Scc, W, last, tb);
+}
+
+// Number of vertices in the components marked in bits
+static long long bitsSize(const uint64_t* bits, const int words, const long long* compSize) {
+    long long size = 0;
+    for (int w = 0; w < words; ++w)
+    {
+        uint64_t x = bits[w];
+        while (x)
+        {
+            size += compSize[w*64 + __builtin_ctzll(x)];
+            x &= x - 1;
+        }
+    }
+    return size;
+}
+
+// For every component C_t (from last to first) picks the cheaper order. Both orders only touch destinations that
+// are reachable from the pivot, so the cost uses R(v) = number of vertices in C^(<t) reachable from v:
+//   bridge -> heads: |C_t|*|Out(C_t)| + sum_{h in H_t} (t + (|C_t|+1)*R(h))
+//   tails -> bridge: sum_{h in H_t} step1(h) + sum_{k in I_t} (t + |C_t|*R(k))
+// where t + R(p) is the cost of building (or scanning without a tree) the reach of pivot p, and step1(h) follows
+// tailsThenBridge: deg(h)*(t + R(h)) without the out-tree, (t + R(h)) + deg(h)*R(h) with it.
+// R(k) is the union over the heads of k, computed from component-level reachability bitsets.
+static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
+    const int C = Scc.sccCount;
+    const int words = (C + 63) / 64;
+
+    long long* compSize = (long long*)calloc(C, sizeof(long long));
+    for (int v = 0; v < n; ++v)
+        compSize[Scc.component[v]]++;
+
+    uint64_t* reachBits = (uint64_t*)calloc((size_t)C*words, sizeof(uint64_t)); // components reachable from component c
+    long long* reachSize = (long long*)malloc(sizeof(long long)*C);              // vertices reachable from component c
+    uint64_t* tailBits = (uint64_t*)malloc(sizeof(uint64_t)*words);
+    int* inDeg = (int*)calloc(n, sizeof(int));                                     // number of tails of a head in C_t
+
+    TreeBuffers tb;
+    createTreeBuffers(&tb, n);
+
+    for (int t = 0; t < C; ++t)
+    {
+        uint64_t* bitsT = reachBits + (size_t)t*words;
+        long long size = compSize[t];
+        long long out = 0, headsCost = 0, tailsCost = 0;
+
+        for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        {
+            memset(tailBits, 0, sizeof(uint64_t)*words);
+            for (int i = 0; i < B.tailOut[k]; ++i)
+            {
+                int h = B.tailHead[k][i];
+                inDeg[h]++;
+                const uint64_t* bitsH = reachBits + (size_t)Scc.component[h]*words;
+                for (int w = 0; w < words; ++w)
+                    tailBits[w] |= bitsH[w];
+            }
+            tailsCost += t + size*bitsSize(tailBits, words, compSize);
+            out += B.tailOut[k];
+        }
+
+        for (int i = 0; i < B.headCount[t]; ++i)
+        {
+            int h = B.heads[t][i];
+            int hc = Scc.component[h];
+            long long R = reachSize[hc];
+            headsCost += t + (size + 1)*R;
+            if (inDeg[h] > TREE_MIN_TAILS)
+                tailsCost += t + R + inDeg[h]*R;
+            else
+                tailsCost += inDeg[h]*(t + R);
+            inDeg[h] = 0;
+
+            const uint64_t* bitsH = reachBits + (size_t)hc*words;
+            for (int w = 0; w < words; ++w)
+                bitsT[w] |= bitsH[w];
+        }
+        headsCost += size*out;
+
+        if (out > 0)
+        {
+            if (headsCost <= tailsCost)
+                bridgeThenHeads(t, Scc, B, W, last, &tb);
+            else
+                tailsThenBridge(t, Scc, B, W, last, &tb);
+        }
+
+        bitsT[t / 64] |= (uint64_t)1 << (t % 64);
+        reachSize[t] = bitsSize(bitsT, words, compSize);
+    }
+
+    freeTreeBuffers(&tb);
+    free(inDeg);
+    free(tailBits);
+    free(reachSize);
+    free(reachBits);
+    free(compSize);
     return W;
     }
 
@@ -912,4 +1092,30 @@ float** SCCvertex(float** graph, int n) {
     return W;
     }
 
+// SCCvertex, but each component picks the cheaper order of the two steps (bridge -> heads or tails -> bridge)
+float** SCCvertexAdaptive(float** graph, int n) {
 
+    float** W = copy2DArray(graph, n);
+    int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
+    for (int i=0; i<n; i++)
+    {
+        last[i] = (int*)malloc(sizeof(int)*n);
+        for (int j=0; j<n; j++)
+        {
+            last[i][j] = i;
+        }
+    }
+
+    InitAdjList(n);
+    SCCResult SCCs = findSCCs_addEdges(W, n);
+    Bridges B = tEdgesToVertexRelaxSets(SCCs.component, SCCs.sccCount, n);
+
+    separatelyTree(W, n , SCCs, last); // solve APSP in each component with Tree
+    AdaptiveBridgeTree(SCCs, B, W, n, last); // APSP between the SCCs
+
+    freeBridges(B, n , SCCs.sccCount);
+    FreeAdjList(); freeSCCs(SCCs);
+    free2DInt(last, n);
+
+    return W;
+    }
