@@ -12,6 +12,7 @@ extern "C" {
     void Run_BA_Test(AlgorithmFP* algs, char** algNames);
     void Run_WorstCase_Test(AlgorithmFP* algs, char** algNames);
     void Run_RandomSizeSCC_Test(AlgorithmFP* algs, char** algNames);
+    void Run_SNAP_Test(AlgorithmFP* algs, char** algNames);
     float** WorstCaseGraph(int n, int comps, double outgoingProb, double internalProb);
     float **two_scc_graph(int nA, int nB, int mAB);
     void print_scc_boundaries(float **g, int n);

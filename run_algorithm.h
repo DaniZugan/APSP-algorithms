@@ -37,6 +37,28 @@ typedef struct {
 
 typedef float**(*AlgorithmFP)(float **, int);
 
+// Time limit in seconds for one algorithm on one instance. A run that exceeds it is killed and its time is
+// reported as MAX_INSTANCE_TIME.
+#define MAX_INSTANCE_TIME 60.0
+
+typedef enum {
+    RUN_OK = 0,      // finished, output correct (or not checked)
+    RUN_WRONG = 1,   // finished, check found errors
+    RUN_TIMEOUT = 2, // killed after the time limit, time = limit
+    RUN_CRASH = 3    // child process died (segfault, out of memory, ...), time = -1
+} RunStatus;
+
+// Checks an output matrix and returns the number of errors. Runs in the child process, so it may only read ctx.
+typedef int (*CheckFP)(float** mat, int n, void* ctx);
+
+// Shared n x n matrix that a child process can write its result into (row-major, unmap with FreeSharedMatrix)
+float* CreateSharedMatrix(int n);
+void FreeSharedMatrix(float* matrix, int n);
+
+RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit, double* time,
+                            CheckFP check, void* ctx, float* out, int* errors);
+const char* RunStatusName(RunStatus status);
+
 int countEdges(float** graph, int n);
 float** RunAlgorithmReturnMatrix(float** graph, int n, double* time, AlgorithmFP alg);
 int RunAlgorithm(float** graph, int n, double* time, AlgorithmFP alg, int checkOutput, float** reference);

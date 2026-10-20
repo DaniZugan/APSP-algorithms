@@ -35,5 +35,6 @@ add_executable(APSP main.cpp
         GraphTools/VertexRelax.c
         GraphTools/regular.c
         GraphTools/randomSCC.c
+        GraphTools/snap.c
 )
 target_link_libraries(APSP PRIVATE Boost::boost Boost::system Boost::filesystem)

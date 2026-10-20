@@ -9,6 +9,16 @@
 #include <stdlib.h>
 #include <tgmath.h>
 #include <time.h>
+#include <string.h>
+
+#ifndef _WIN32
+#include <errno.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 float** RunAlgorithmReturnMatrix(float** graph, int n, double* time, AlgorithmFP alg)
 {
@@ -65,6 +75,220 @@ int RunAlgorithm(float** graph, int n, double* time, AlgorithmFP alg, int checkO
 	return ret;
 }
 
+// Timed runs in a child process ----------------------------------------------------------------------------------------
+
+const char* RunStatusName(RunStatus status)
+{
+	switch (status) {
+		case RUN_OK: return "ok";
+		case RUN_WRONG: return "WRONG";
+		case RUN_TIMEOUT: return "TIMEOUT";
+		default: return "CRASH";
+	}
+}
+
+#ifndef _WIN32
+
+float* CreateSharedMatrix(int n)
+{
+	void* p = mmap(NULL, (size_t)n * (size_t)n * sizeof(float), PROT_READ | PROT_WRITE,
+				   MAP_SHARED | MAP_ANON, -1, 0);
+	return (p == MAP_FAILED) ? NULL : (float*)p;
+}
+
+void FreeSharedMatrix(float* matrix, int n)
+{
+	if (matrix != NULL)
+		munmap(matrix, (size_t)n * (size_t)n * sizeof(float));
+}
+
+static double monotonicNow(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (double)t.tv_sec + (double)t.tv_nsec / 1.0e9;
+}
+
+// Writes the whole buffer, returns 0 on failure
+static int writeAll(int fd, const void* buf, size_t size)
+{
+	const char* p = (const char*)buf;
+	while (size > 0) {
+		ssize_t w = write(fd, p, size);
+		if (w < 0 && errno == EINTR) continue;
+		if (w <= 0) return 0;
+		p += w;
+		size -= (size_t)w;
+	}
+	return 1;
+}
+
+// Reads size bytes, waiting until deadline (monotonic seconds, < 0 waits forever).
+// Returns 1 when read, 0 on timeout, -1 when the writer closed the pipe (child died).
+static int readWithDeadline(int fd, void* buf, size_t size, double deadline)
+{
+	char* p = (char*)buf;
+	while (size > 0) {
+		int timeoutMs = -1;
+		if (deadline >= 0) {
+			double left = deadline - monotonicNow();
+			if (left <= 0) return 0;
+			timeoutMs = (int)(left * 1000.0) + 1;
+		}
+		struct pollfd pfd = {fd, POLLIN, 0};
+		int r = poll(&pfd, 1, timeoutMs);
+		if (r < 0 && errno == EINTR) continue;
+		if (r < 0) return -1;
+		if (r == 0) continue; // loop re-checks the deadline
+
+		ssize_t got = read(fd, p, size);
+		if (got < 0 && errno == EINTR) continue;
+		if (got <= 0) return -1;
+		p += got;
+		size -= (size_t)got;
+	}
+	return 1;
+}
+
+/*
+ * Runs alg in a forked child process and kills it if it does not finish within limit seconds.
+ * The child sees graph (and ctx) through copy-on-write, so nothing is copied. All memory the algorithm
+ * allocates lives in the child and is released by the OS when the child exits or is killed, so a killed
+ * run cannot leak memory or leave global state (e.g. the adjacency lists in SCC.cpp) broken in this process.
+ *
+ * The limit covers only the algorithm. The optional check (and copying the result into the shared matrix out)
+ * runs after the time is reported and has no limit.
+ *
+ * time: CPU time of the algorithm, limit on timeout, -1 on crash. errors: result of check (0 if none).
+ */
+RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit, double* time,
+							CheckFP check, void* ctx, float* out, int* errors)
+{
+	*errors = 0;
+	*time = -1;
+
+	int fd[2];
+	if (pipe(fd) != 0) {
+		perror("pipe");
+		return RUN_CRASH;
+	}
+
+	fflush(stdout); // otherwise buffered output is printed by both processes
+	fflush(stderr);
+	pid_t pid = fork();
+	if (pid < 0) {
+		perror("fork");
+		close(fd[0]);
+		close(fd[1]);
+		return RUN_CRASH;
+	}
+
+	if (pid == 0) { // child
+		close(fd[0]);
+		double t = 0;
+		float** mat = RunAlgorithmReturnMatrix(graph, n, &t, alg);
+		writeAll(fd[1], &t, sizeof(t)); // message 1: algorithm finished
+
+		int e = check ? check(mat, n, ctx) : 0;
+		if (out != NULL)
+			for (int i = 0; i < n; i++)
+				memcpy(out + (size_t)i * n, mat[i], (size_t)n * sizeof(float));
+		freeGraph(mat, n);
+		writeAll(fd[1], &e, sizeof(e)); // message 2: check done, out written
+
+		close(fd[1]);
+		fflush(stdout);
+		fflush(stderr);
+		_exit(0); // _exit, so the parent's atexit handlers and buffers are not run again
+	}
+
+	// parent
+	close(fd[1]);
+	RunStatus status;
+	double t = 0;
+	int r = readWithDeadline(fd[0], &t, sizeof(t), monotonicNow() + limit);
+	if (r == 0) {
+		kill(pid, SIGKILL);
+		*time = limit;
+		status = RUN_TIMEOUT;
+	}
+	else if (r < 0) {
+		status = RUN_CRASH;
+	}
+	else {
+		*time = t;
+		int e = 0;
+		if (readWithDeadline(fd[0], &e, sizeof(e), -1) == 1) {
+			*errors = e;
+			status = e ? RUN_WRONG : RUN_OK;
+		}
+		else status = RUN_CRASH; // died during the check
+	}
+	close(fd[0]);
+
+	int wstatus;
+	while (waitpid(pid, &wstatus, 0) < 0 && errno == EINTR) {} // always reap the child, also after kill
+	if (status != RUN_TIMEOUT && WIFSIGNALED(wstatus))
+		status = RUN_CRASH;
+	if (status == RUN_CRASH)
+		*time = -1;
+
+	return status;
+}
+
+#else // no fork on Windows: run without a time limit
+
+float* CreateSharedMatrix(int n)
+{
+	return (float*)malloc((size_t)n * (size_t)n * sizeof(float));
+}
+
+void FreeSharedMatrix(float* matrix, int n)
+{
+	free(matrix);
+}
+
+RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit, double* time,
+							CheckFP check, void* ctx, float* out, int* errors)
+{
+	float** mat = RunAlgorithmReturnMatrix(graph, n, time, alg);
+	*errors = check ? check(mat, n, ctx) : 0;
+	if (out != NULL)
+		for (int i = 0; i < n; i++)
+			memcpy(out + (size_t)i * n, mat[i], (size_t)n * sizeof(float));
+	freeGraph(mat, n);
+	return *errors ? RUN_WRONG : RUN_OK;
+}
+
+#endif
+
+// Compares an output with the reference matrix (ctx), prints the first few differences
+static int compareWithReference(float** mat, int n, void* ctx)
+{
+	float** reference = (float**)ctx;
+	int diffs = 0;
+	for (int i=0; i<n; i++)
+	{
+		for (int j=0; j<n; j++)
+		{
+			if (i == j)
+				continue;
+
+			float a = mat[i][j];
+			float b = reference[i][j];
+			if ( fabs(a - b) >= 0.01 ) //0.0001
+			{
+				if (diffs < 10)
+					printf("Diff [%d][%d]: %f %f \n", i, j, a, b);
+				diffs++;
+			}
+		}
+	}
+	return diffs;
+}
+
+// Runs all algorithms with the MAX_INSTANCE_TIME limit. The first algorithm is the reference the others are checked
+// against; if it does not finish, the others are still timed but not checked.
 double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 {
 	int size = 0;
@@ -72,45 +296,59 @@ double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 		size++;
 	}
 
-
 	double* results = (double*)malloc(sizeof(double)*size);
-
-	float** ref = RunAlgorithmReturnMatrix(graph, n, &(results[0]), algs[0]);	 // first alg is reference alg
-	//FILE *csvFile = fopen("data.csv", "a");
-	//fprintf(csvFile, " %f\n", results[0]);
-	//fclose(csvFile);
 	*mStar = 0;
-	for (int i=0; i<n; i++)
+
+	float* refData = CreateSharedMatrix(n); // the reference is computed in a child, which writes it here
+	float** ref = NULL;
+	int errors = 0;
+	RunStatus status = RUN_CRASH;
+	if (refData != NULL)
+		status = RunAlgorithmTimed(graph, n, algs[0], MAX_INSTANCE_TIME, &(results[0]), NULL, NULL, refData, &errors);
+	else
+		printf("Cannot allocate the reference matrix\n");
+
+	if (status == RUN_OK)
 	{
-		for (int j=0; j<n; j++)
+		ref = (float**)malloc(sizeof(float*)*n); // row pointers into refData
+		for (int i=0; i<n; i++)
+			ref[i] = refData + (size_t)i * n;
+
+		for (int i=0; i<n; i++)
 		{
-			if (i == j)
-				continue;
-			else
+			for (int j=0; j<n; j++)
 			{
-				if (fabs(ref[i][j] - graph[i][j]) <= 0.0001)
+				if (i == j)
+					continue;
+				else
 				{
-					(*mStar)++;
+					if (fabs(ref[i][j] - graph[i][j]) <= 0.0001)
+					{
+						(*mStar)++;
+					}
 				}
 			}
 		}
 	}
+	else
+	{
+		if (refData == NULL)
+			results[0] = -1;
+		printf("Algorithm 0 (reference): %s, other algorithms are not checked\n", RunStatusName(status));
+	}
 
 	for (int i=1; i<size; i++)
 	{
-		RunAlgorithm(graph, n, &(results[i]), algs[i], 1, ref);
-
-        //printf("%lf\n", results[i]);
-		//FILE *csvFile = fopen("data.csv", "a");
-		//fprintf(csvFile, "%f, %s\n", results[i], algs[i]);
-		//fclose(csvFile);
+		status = RunAlgorithmTimed(graph, n, algs[i], MAX_INSTANCE_TIME, &(results[i]),
+								   ref ? compareWithReference : NULL, ref, NULL, &errors);
+		if (status == RUN_WRONG)
+			printf("Algorithm %d: WRONG, %d entries differ from the reference\n", i, errors);
+		else if (status != RUN_OK)
+			printf("Algorithm %d: %s\n", i, RunStatusName(status));
 	}
 
-	for (int i=0; i<n; i++)
-	{
-		free(ref[i]);
-	}
 	free(ref);
+	FreeSharedMatrix(refData, n);
 
 	return results;
 }

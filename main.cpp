@@ -35,6 +35,7 @@ int main() {
     //Run_BA_Test(algs, algNames);          // Barabasi-Albert
     //Run_WorstCase_Test(algs, algNames);     // SCCs with outgoing edges between them
     Run_RandomSizeSCC_Test(algs, algNames);
+    //Run_SNAP_Test(algs, algNames);        // SNAP real-world graphs from SNAP-graphs/
 
 
     int n = 16;
