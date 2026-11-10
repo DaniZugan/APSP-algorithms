@@ -30,13 +30,13 @@ int main() {
     //RunSparseTest(algs, algNames);        // Cycle + ErdosRenyi
     //RunSCCsTest(algs, algNames);          // SCCs with density and probability of outgoing edges
     //RunCompleteTest(algs, algNames, 0);   // Complete graphs
-    //RunGnutellaTest(algs, algNames);      // Gnutella real-world networks
+    RunGnutellaTest(algs, algNames);      // Gnutella real-world networks
     //RunTxtTest(algs, algNames);           // Reading txt file to create graphs
     //Run_BA_Test(algs, algNames);          // Barabasi-Albert
     //Run_WorstCase_Test(algs, algNames);     // SCCs with outgoing edges between them
-    //Run_RandomSizeSCC_Test(algs, algNames);
-    //Run_StarSCC_Test(algs, algNames);     // like RandomSizeSCC, pairs joined by 1 tail -> all heads or all tails -> 1 head
-    //Run_EqualSizeSCC_Test(algs, algNames); // like RandomSizeSCC, all SCCs of equal size -> results/equalSizeSCC_data.csv
+    Run_RandomSizeSCC_Test(algs, algNames);
+    Run_StarSCC_Test(algs, algNames);     // like RandomSizeSCC, pairs joined by 1 tail -> all heads or all tails -> 1 head
+    Run_EqualSizeSCC_Test(algs, algNames); // like RandomSizeSCC, all SCCs of equal size -> results/equalSizeSCC_data.csv
     Run_SNAP_Test(algs, algNames);        // SNAP real-world graphs from SNAP-graphs/
     //Export_SCCGraph(32, 4, 0.1, 0.3, 0.5, 1, "../results/Viz/SCC/graph.csv"); // n, k, outProb, inProb, coin, star -> draw_graph.py
 
