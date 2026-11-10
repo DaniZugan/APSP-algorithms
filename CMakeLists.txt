@@ -1,12 +1,14 @@
-cmake_minimum_required(VERSION 3.29)
+cmake_minimum_required(VERSION 3.20)
 project(APSP)
 
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_OSX_SYSROOT /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
 
-# Use Homebrew's Boost 1.87.0
-set(BOOST_ROOT "/opt/homebrew/Cellar/boost/1.87.0")  # Homebrew path
-find_package(Boost 1.87.0 REQUIRED COMPONENTS system filesystem)  # Match installed version
+if(APPLE)
+    set(CMAKE_OSX_SYSROOT /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk)
+    # Use Homebrew's Boost 1.87.0
+    set(BOOST_ROOT "/opt/homebrew/Cellar/boost/1.87.0")  # Homebrew path
+endif()
+find_package(Boost REQUIRED COMPONENTS system filesystem)
 
 add_executable(APSP main.cpp
         Dijkstra.cpp
@@ -30,9 +32,9 @@ add_executable(APSP main.cpp
         algoritms/DijkstraAPSP.cpp
         algoritms/DijkstraAPSP.h
         GraphTools/ba_graph.c
-        GraphTools/WorstCase.c
+        GraphTools/worstCase.c
         GraphTools/GraphTools.h
-        GraphTools/VertexRelax.c
+        GraphTools/vertexRelax.c
         GraphTools/regular.c
         GraphTools/randomSCC.c
         GraphTools/snap.c

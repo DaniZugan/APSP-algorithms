@@ -10,11 +10,17 @@
 #define SNAP_FOLDER "../SNAP-graphs"
 #define SNAP_CSV "../results/SNAP_data.csv"
 
-// Graphs with more vertices are skipped: graph, W and last take ~12*n^2 bytes (n = 20000 -> 4.8 GB)
-#define SNAP_MAX_NODES 20000
+// Graphs with more vertices are skipped: graph, W and last take ~12*n^2 bytes (n = 20000 -> 4.8 GB,
+// n = 27770 (Cit-HepTh) -> 9.3 GB, which swaps on an 8 GB machine). Above ~46000 vertices n*n overflows
+// int in the SCC algorithms (InitAdjList), so the limit must stay below that.
+#define SNAP_MAX_NODES 46000
 
 // Number of random source rows checked with Dijkstra for every algorithm, 0 checks all rows
 #define SNAP_CHECK_ROWS 0
+
+// 1: bitcoin graphs (file name contains "bitcoin") use their trust ratings as weights,
+// rating -10 -> weight 1, rating 10 -> weight 0, linear in between. 0: random weights as for the other graphs.
+#define SNAP_BITCOIN_RATINGS 1
 
 // Pomožne funkcije ----------------------------------------------------------------------------------------------------
 static int compareLongs(const void* a, const void* b)
@@ -37,11 +43,153 @@ static int findId(const long* ids, int n, long id)
     return -1;
 }
 
+static int compareStrings(const void* a, const void* b)
+{
+    return strcmp(*(char* const*)a, *(char* const*)b);
+}
+
+// All regular files in folder except hidden ones (.DS_Store, ...), sorted by name
+static char** listSnapFiles(const char* folder, int* count)
+{
+    *count = 0;
+    DIR* dir = opendir(folder);
+    if (!dir) {
+        perror("Failed to open SNAP folder");
+        return NULL;
+    }
+
+    int capacity = 16;
+    char** names = malloc(capacity * sizeof(char*));
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != NULL) {
+        if (entry->d_type != DT_REG || entry->d_name[0] == '.') continue;
+        if (*count == capacity) {
+            capacity *= 2;
+            names = realloc(names, capacity * sizeof(char*));
+        }
+        names[(*count)++] = strdup(entry->d_name);
+    }
+    closedir(dir);
+
+    qsort(names, *count, sizeof(char*), compareStrings);
+    return names;
+}
+
+// Reads one line into *buf (grown as needed), without the trailing newline. Returns 0 at end of file.
+static int readLine(FILE* file, char** buf, size_t* capacity)
+{
+    size_t len = 0;
+    int ch;
+    while ((ch = fgetc(file)) != EOF && ch != '\n') {
+        if (len + 1 >= *capacity) {
+            *capacity *= 2;
+            *buf = realloc(*buf, *capacity);
+        }
+        (*buf)[len++] = (char)ch;
+    }
+    if (ch == EOF && len == 0) return 0;
+    if (len > 0 && (*buf)[len - 1] == '\r') len--;
+    (*buf)[len] = '\0';
+    return 1;
+}
+
+// Hash table that gives every user name a number (wiki-RfA uses names instead of ids)
+typedef struct {
+    char** keys;
+    long* ids;
+    size_t capacity;
+    size_t count;
+} NameTable;
+
+static unsigned long hashName(const char* s)
+{
+    unsigned long h = 5381;
+    while (*s) h = h * 33 + (unsigned char)*s++;
+    return h;
+}
+
+static void nameTableInsert(NameTable* t, char* key, long id)
+{
+    size_t i = hashName(key) & (t->capacity - 1);
+    while (t->keys[i] != NULL) i = (i + 1) & (t->capacity - 1);
+    t->keys[i] = key;
+    t->ids[i] = id;
+}
+
+static long nameId(NameTable* t, const char* name)
+{
+    size_t i = hashName(name) & (t->capacity - 1);
+    while (t->keys[i] != NULL) {
+        if (strcmp(t->keys[i], name) == 0) return t->ids[i];
+        i = (i + 1) & (t->capacity - 1);
+    }
+
+    if (2 * (t->count + 1) > t->capacity) { // keep the table at most half full
+        char** oldKeys = t->keys;
+        long* oldIds = t->ids;
+        size_t oldCapacity = t->capacity;
+        t->capacity *= 2;
+        t->keys = calloc(t->capacity, sizeof(char*));
+        t->ids = malloc(t->capacity * sizeof(long));
+        for (size_t j = 0; j < oldCapacity; ++j)
+            if (oldKeys[j] != NULL) nameTableInsert(t, oldKeys[j], oldIds[j]);
+        free(oldKeys);
+        free(oldIds);
+    }
+
+    long id = (long)t->count++;
+    nameTableInsert(t, strdup(name), id);
+    return id;
+}
+
+static void freeNameTable(NameTable* t)
+{
+    for (size_t i = 0; i < t->capacity; ++i)
+        free(t->keys[i]);
+    free(t->keys);
+    free(t->ids);
+}
+
+typedef struct {
+    long* from;
+    long* to;
+    float* w; // weight of the edge, negative means a random weight from frand()
+    int m;
+    int capacity;
+} EdgeList;
+
+static void addEdge(EdgeList* e, long a, long b, float w)
+{
+    if (e->m == e->capacity) {
+        e->capacity *= 2;
+        e->from = realloc(e->from, e->capacity * sizeof(long));
+        e->to = realloc(e->to, e->capacity * sizeof(long));
+        e->w = realloc(e->w, e->capacity * sizeof(float));
+    }
+    e->from[e->m] = a;
+    e->to[e->m] = b;
+    e->w[e->m] = w;
+    e->m++;
+}
+
+// Trust rating -10..10 (soc-sign-bitcoin*) -> weight 1..0: distrust is a long edge, full trust a free one
+static float ratingWeight(long rating)
+{
+    if (rating < -10) rating = -10;
+    if (rating > 10) rating = 10;
+    return (float)(10 - rating) / 20.0f;
+}
+
 /*
- * Reads a SNAP edge list ("# ..." comment lines, then "from to" per line).
- * SNAP node ids are not contiguous (e.g. 1001, 9304045), so they are remapped
- * to 0..n-1 in increasing order. Self loops are ignored and every edge gets a
- * random weight from frand().
+ * Reads a SNAP graph. Supported formats (decided line by line):
+ *   - edge list "from to ..." separated by spaces, tabs or commas, "#" comment lines
+ *     (Wiki-Vote, Cit-HepTh, email-Eu-core, soc-sign-bitcoin*.csv; extra columns are ignored)
+ *   - wikiElec: "U <id> ..." starts an election, every "V <vote> <id> ..." is an edge voter -> candidate
+ *   - wiki-RfA: "SRC:<name>" then "TGT:<name>" is an edge source -> target, names are numbered
+ *     (votes with an empty SRC are anonymous and ignored)
+ * Node ids are not contiguous (e.g. 1001, 9304045), so they are remapped to 0..n-1 in increasing order.
+ * Self loops are ignored and every edge gets a random weight from frand(). With SNAP_BITCOIN_RATINGS the
+ * bitcoin graphs ("SOURCE,TARGET,RATING,TIME") instead get ratingWeight(RATING) in [0, 1].
  *
  * Returns a graph with size 0 if the file cannot be read or has more than
  * maxNodes vertices (then *skippedNodes holds its vertex count).
@@ -57,25 +205,56 @@ static Graf ReadSnapGraph(const char* filename, int maxNodes, int* skippedNodes)
         return graf;
     }
 
-    int capacity = 1024, m = 0;
-    long* from = malloc(capacity * sizeof(long));
-    long* to = malloc(capacity * sizeof(long));
+    EdgeList edges = {malloc(1024 * sizeof(long)), malloc(1024 * sizeof(long)), malloc(1024 * sizeof(float)), 0, 1024};
+    int useRatings = SNAP_BITCOIN_RATINGS && strstr(filename, "bitcoin") != NULL;
+    NameTable names = {calloc(1024, sizeof(char*)), malloc(1024 * sizeof(long)), 1024, 0};
 
-    char line[512];
-    while (fgets(line, sizeof(line), file)) {
-        if (line[0] == '#') continue;
-        long a, b;
-        if (sscanf(line, "%ld %ld", &a, &b) != 2) continue;
-        if (m == capacity) {
-            capacity *= 2;
-            from = realloc(from, capacity * sizeof(long));
-            to = realloc(to, capacity * sizeof(long));
+    size_t lineCapacity = 1024;
+    char* line = malloc(lineCapacity);
+    long candidate = -1; // wikiElec: candidate of the current election
+    long source = -1;    // wiki-RfA: source of the current vote
+
+    while (readLine(file, &line, &lineCapacity)) {
+        if (line[0] == '#' || line[0] == '\0') continue;
+
+        if (strncmp(line, "SRC:", 4) == 0) {
+            source = (line[4] != '\0') ? nameId(&names, line + 4) : -1;
+            continue;
         }
-        from[m] = a;
-        to[m] = b;
-        m++;
+        if (strncmp(line, "TGT:", 4) == 0) {
+            if (source != -1 && line[4] != '\0')
+                addEdge(&edges, source, nameId(&names, line + 4), -1.0f);
+            source = -1;
+            continue;
+        }
+        if (strchr(line, ':') && line[0] >= 'A' && line[0] <= 'Z' && line[1] >= 'A' && line[1] <= 'Z')
+            continue; // other wiki-RfA fields (VOT:, RES:, YEA:, DAT:, TXT:)
+
+        long a, b, rating;
+        if (line[0] == 'U' && (line[1] == ' ' || line[1] == '\t')) {
+            if (sscanf(line + 1, "%ld", &a) == 1) candidate = a;
+            continue;
+        }
+        if (line[0] == 'V' && (line[1] == ' ' || line[1] == '\t')) {
+            if (candidate != -1 && sscanf(line + 1, "%ld %ld", &b, &a) == 2) // b = vote, a = voter
+                addEdge(&edges, a, candidate, -1.0f);
+            continue;
+        }
+
+        for (char* c = line; *c; ++c)
+            if (*c == ',') *c = ' ';
+        int read = sscanf(line, "%ld %ld %ld", &a, &b, &rating);
+        if (read >= 2)
+            addEdge(&edges, a, b, (useRatings && read == 3) ? ratingWeight(rating) : -1.0f);
     }
     fclose(file);
+    free(line);
+    freeNameTable(&names);
+
+    long* from = edges.from;
+    long* to = edges.to;
+    float* w = edges.w;
+    int m = edges.m;
 
     // Remap ids to 0..n-1
     long* ids = malloc(2 * (size_t)m * sizeof(long) + 1);
@@ -98,7 +277,7 @@ static Graf ReadSnapGraph(const char* filename, int maxNodes, int* skippedNodes)
             int u = findId(ids, n, from[i]);
             int v = findId(ids, n, to[i]);
             if (u != v)
-                graph[u][v] = frand();
+                graph[u][v] = (w[i] >= 0.0f) ? w[i] : frand();
         }
         graf.matrix = graph;
         graf.size = n;
@@ -107,6 +286,7 @@ static Graf ReadSnapGraph(const char* filename, int maxNodes, int* skippedNodes)
     free(ids);
     free(from);
     free(to);
+    free(w);
     return graf;
 }
 
@@ -247,8 +427,8 @@ static int snapCheck(float** mat, int n, void* ctx)
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Runs all algorithms on every .txt graph in SNAP-graphs and checks the results with Dijkstra.
-// Every run is limited to MAX_INSTANCE_TIME seconds; a run that exceeds it gets the limit as its time.
+// Runs all algorithms on every graph file in SNAP-graphs and checks the results with Dijkstra.
+// Every run is limited to SNAP_INSTANCE_TIME seconds; a run that exceeds it gets the limit as its time.
 // The status column is ok, WRONG, TIMEOUT or CRASH (time -1).
 void Run_SNAP_Test(AlgorithmFP* algs, char** algNames)
 {
@@ -258,9 +438,9 @@ void Run_SNAP_Test(AlgorithmFP* algs, char** algNames)
     }
 
     int fileCount = 0;
-    char** files = getFilenamesInFolder(SNAP_FOLDER, &fileCount);
+    char** files = listSnapFiles(SNAP_FOLDER, &fileCount);
     if (!files || fileCount == 0) {
-        printf("No .txt files found in %s\n", SNAP_FOLDER);
+        printf("No graph files found in %s\n", SNAP_FOLDER);
         free(files);
         return;
     }
@@ -310,7 +490,7 @@ void Run_SNAP_Test(AlgorithmFP* algs, char** algNames)
 
             for (int i = 0; i < algCount; ++i) {
                 int wrongRows = 0;
-                status[i] = RunAlgorithmTimed(graph, n, algs[i], MAX_INSTANCE_TIME, &times[i],
+                status[i] = RunAlgorithmTimed(graph, n, algs[i], SNAP_INSTANCE_TIME, &times[i],
                                               snapCheck, &csr, NULL, &wrongRows);
 
                 printf("%-20s %8.3f s  %s\n", algNames[i], times[i], RunStatusName(status[i]));

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APSP results</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-row">
+      <div>
+        <h1>APSP results</h1>
+        <p class="source" id="source"></p>
+      </div>
+    </div>
+    <nav class="wrap tabs" id="tabs" role="tablist">
+      <button role="tab" data-tab="overview">Overview</button>
+      <button role="tab" data-tab="random">Random SCC</button>
+      <button role="tab" data-tab="equal">Equal SCC</button>
+      <button role="tab" data-tab="star">Star SCC</button>
+      <button role="tab" data-tab="gnutella">Gnutella</button>
+      <button role="tab" data-tab="snap">SNAP</button>
+      <button role="tab" data-tab="pdfs">Graph PDFs</button>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="algs" id="algs" aria-label="Algorithms"></section>
+    <section id="view"></section>
+  </main>
+
+  <div class="tip" id="tip" hidden></div>
+
+  <!-- data.js is written by results/Viz/plot_results.py -->
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -17,11 +17,11 @@ using namespace std;
 
 int main() {
     srand(time(NULL));
-    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCalgo, SCCvertex, SCCvertexAdaptive
-    // "Uniform", "Hidden", "FW", "Dijkstra", "Tree", "Toroslu", "SCCedge", "SCCvertex", "SCCadaptive"
+    // UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, DijkstraAPSPc, FastHourglassHalf, Toro, SCCedge, SCCvertex, SCCvertexAdaptive, SCCvertexHourglass, SCCvertexBridgeHG
+    // "Uniform", "Hidden", "FW", "Dijkstra", "Tree", "Toroslu", "SCCedge", "SCCvertex", "SCCadaptive", "Vertex-SCC-hourglass", "Vertex-SCC-bridgeHG"
     // RelaxCounter rc;
-    AlgorithmFP algs[] = {FastHourglassHalf, SCCalgo, SCCvertex, SCCvertexAdaptive, NULL}; // vedno dodaj null na koncu!
-    char* algNames[] = {"Tree", "SCC-edge", "SCC-vertex", "SCC-vertexAdaptive", "NULL"};
+    AlgorithmFP algs[] = {FastHourglassHalf, SCCedge, SCCvertexAdaptive, SCCvertexNoTree, SCCedgeOrVertex, DijkstraAPSPc, UniformPathsAlgorithm, HiddenPathsAlgorithm, floydWarshall, NULL}; // vedno dodaj null na koncu!
+    char* algNames[] = {"Tree", "Edge-SCC", "Vertex-SCC", "VertexNaive-SCC", "Adaptive-SCC", "Dijkstra", "Uniform", "Hidden", "FW", "NULL"};
 
     //RunTurkTest(algs, algNames);          // ErdosRenyi
     //RunTurk2Test(algs, algNames);         // TurkTest with extra data (sccV, sccE, wccV, wccE)
@@ -34,14 +34,18 @@ int main() {
     //RunTxtTest(algs, algNames);           // Reading txt file to create graphs
     //Run_BA_Test(algs, algNames);          // Barabasi-Albert
     //Run_WorstCase_Test(algs, algNames);     // SCCs with outgoing edges between them
-    Run_RandomSizeSCC_Test(algs, algNames);
-    //Run_SNAP_Test(algs, algNames);        // SNAP real-world graphs from SNAP-graphs/
+    //Run_RandomSizeSCC_Test(algs, algNames);
+    //Run_StarSCC_Test(algs, algNames);     // like RandomSizeSCC, pairs joined by 1 tail -> all heads or all tails -> 1 head
+    //Run_EqualSizeSCC_Test(algs, algNames); // like RandomSizeSCC, all SCCs of equal size -> results/equalSizeSCC_data.csv
+    Run_SNAP_Test(algs, algNames);        // SNAP real-world graphs from SNAP-graphs/
+    //Export_SCCGraph(32, 4, 0.1, 0.3, 0.5, 1, "../results/Viz/SCC/graph.csv"); // n, k, outProb, inProb, coin, star -> draw_graph.py
 
-
+    /*
     int n = 16;
     float** graph = WorstCaseGraph(n, 4, 1.0, 0.1);
     print2DGraph(graph, n);
     freeGraph(graph,n);
-    
+    */
+
     return 0;
 }

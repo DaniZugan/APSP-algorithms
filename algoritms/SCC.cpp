@@ -1,6 +1,7 @@
 #include "SCC.h"
 #include "../graphGenerators.h"
 #include <cstring>
+#include <vector>
 #include <cstdint>
 #include <ctime>
 #include <cstdio>
@@ -429,7 +430,7 @@ int** BooleanReach(int** reach, int n) {
 }
 
 // relax by edge
-float** SCCalgo(float** graph, int N){
+float** SCCedge(float** graph, int N){
     float** W = copy2DArray(graph, N);
     //rc_reset(&rc);
     InitAdjList(N);                                 // adjacency list
@@ -788,6 +789,8 @@ typedef struct {
     int* idfs;    // inverse DFS permutation, used when building skip
     float* Wp;    // W[p][] distances rearranged to fit permutation order
     int* headIdx; // index of a head in B.heads[t]
+    int* inFirst; // in-tree of the pivot within C_t (Hourglass): first child of a vertex
+    int* inNext;  // next sibling of a vertex
 } TreeBuffers;
 
 static void createTreeBuffers(TreeBuffers* tb, const int n) {
@@ -800,6 +803,8 @@ static void createTreeBuffers(TreeBuffers* tb, const int n) {
     tb->idfs = (int*)malloc(sizeof(int)*n);
     tb->Wp = (float*)malloc(sizeof(float)*n);
     tb->headIdx = (int*)malloc(sizeof(int)*n);
+    tb->inFirst = (int*)malloc(sizeof(int)*n);
+    tb->inNext = (int*)malloc(sizeof(int)*n);
 }
 
 static void freeTreeBuffers(TreeBuffers* tb) {
@@ -810,6 +815,8 @@ static void freeTreeBuffers(TreeBuffers* tb) {
     free(tb->idfs);
     free(tb->Wp);
     free(tb->headIdx);
+    free(tb->inFirst);
+    free(tb->inNext);
 }
 
 // Builds the out-tree of pivot p over C^(<t) in DFS order and returns its size
@@ -854,9 +861,74 @@ static void relaxViaPivot(const int p, const int t, const SCCResult Scc, float**
         relaxSource(s, p, c, W, last, tb);
 }
 
-// Paper order: bridge step (sources -> heads over Out(C_t)), then reduced relaxation from sources via heads
-static void bridgeThenHeads(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb) {
-    // Bridge step: W[s][h] = min(W[s][h], W[s][k] + w(k,h)) -------------------------------------------------------
+// Hourglass: visits the children s of q in the in-tree of p. S[off .. off+len) are the DFS offsets (in the out-tree
+// of p) that improved for q; s only checks those, skips the subtree of every destination that does not improve, and
+// its own subtree in the in-tree if nothing improved.
+static void hourglassVisit(const int q, const int p, const size_t off, const size_t len, float** W, int** last,
+                           const TreeBuffers* tb, std::vector<int>& S) {
+    const float* Wp = tb->Wp;
+    const int* dfs = tb->dfs;
+    const int* skip = tb->skip;
+    for (int s = tb->inFirst[q]; s != -1; s = tb->inNext[s])
+    {
+        const size_t sOff = S.size();
+        const float Wsp = W[s][p];
+        float* Ws = W[s];
+        for (size_t j = 0; j < len;)
+        {
+            int v = S[off + j];
+            int d = dfs[v];
+            if (Wsp + Wp[v] < Ws[d])
+            {
+                Ws[d] = Wsp + Wp[v];
+                last[s][d] = last[p][d];
+                S.push_back(v);
+                j++;
+            }
+            else // the subtree of d in the out-tree does not improve either
+                while (j < len && S[off + j] < skip[v]) j++;
+        }
+        const size_t sLen = S.size() - sOff;
+        if (sLen > 0) // otherwise no descendant of s in the in-tree improves
+            hourglassVisit(s, p, sOff, sLen, W, last, tb, S);
+        S.resize(sOff);
+    }
+}
+
+// In-tree of p within C_t: the parent of s is the vertex after s on the shortest path from s to p
+static void buildInTree(const int p, const int t, const SCCResult Scc, int** last, TreeBuffers* tb) {
+    tb->inFirst[p] = -1; // p may be a head outside C_t
+    for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s])
+        tb->inFirst[s] = -1;
+    for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s])
+    {
+        if (s == p)
+            continue;
+        int q = p; // walk back along the path s -> p to the vertex after s
+        while (last[s][q] != s)
+            q = last[s][q];
+        tb->inNext[s] = tb->inFirst[q];
+        tb->inFirst[q] = s;
+    }
+}
+
+// relaxViaPivot with Hourglass: sources in C_t are visited along the in-tree of p, i.e. the parent of s is the vertex
+// after s on the shortest path from s to p inside C_t. A source only checks the destinations that improved for its
+// parent, since W[s][p] + W[p][d] = W[s][q] + W[q][p] + W[p][d] >= W[s][q] + W[q][d] if q did not improve.
+static void relaxViaPivotHourglass(const int p, const int t, const SCCResult Scc, float** W, int** last,
+                                   TreeBuffers* tb, std::vector<int>& S) {
+    int c = pivotTree(p, t, Scc, W, last, tb);
+    if (c == 0)
+        return;
+    buildInTree(p, t, Scc, last, tb);
+    S.clear();
+    for (int v = 0; v < c; ++v) // the root p: all destinations in its out-tree
+        S.push_back(v);
+    hourglassVisit(p, p, 0, (size_t)c, W, last, tb, S);
+}
+
+// Bridge step: W[s][h] = min(W[s][h], W[s][k] + w(k,h)) for all sources s in C_t and edges (k,h) in Out(C_t)
+static void bridgeStep(const int t, const SCCResult Scc, const Bridges B, float** W, int** last) {
     int k = B.firstTail[t];
     while (k != -1) // for all tails
     {
@@ -876,36 +948,130 @@ static void bridgeThenHeads(const int t, const SCCResult Scc, const Bridges B, f
         }
         k = B.nextTail[k];
     }
+}
+
+// Hourglass in the bridge step: visits the children s of q in the in-tree of tail k. S[off .. off+len) are the
+// indices (in B.tailHead[k]) of the heads that improved for q; s only checks those.
+static void bridgeHourglassVisit(const int q, const int k, const size_t off, const size_t len, const Bridges B,
+                                 float** W, int** last, const TreeBuffers* tb, std::vector<int>& S) {
+    const float* Wk = W[k];
+    const int* heads = B.tailHead[k];
+    for (int s = tb->inFirst[q]; s != -1; s = tb->inNext[s])
+    {
+        const size_t sOff = S.size();
+        const float Wsk = W[s][k];
+        float* Ws = W[s];
+        for (size_t j = 0; j < len; ++j)
+        {
+            int i = S[off + j];
+            int h = heads[i];
+            if (Wsk + Wk[h] < Ws[h])
+            {
+                Ws[h] = Wsk + Wk[h];
+                last[s][h] = last[k][h];
+                S.push_back(i);
+            }
+        }
+        const size_t sLen = S.size() - sOff;
+        if (sLen > 0) // otherwise no descendant of s in the in-tree improves
+            bridgeHourglassVisit(s, k, sOff, sLen, B, W, last, tb, S);
+        S.resize(sOff);
+    }
+}
+
+// Bridge step with Hourglass: sources are visited along the in-tree of every tail k, and a source only checks the
+// heads of k that improved for its parent: W[s][k] + w(k,h) = W[s][q] + W[q][k] + w(k,h) >= W[s][q] + W[q][h]
+// With minHeads > 0, tails with at most minHeads heads are relaxed without building their in-tree.
+static void bridgeStepHourglass(const int t, const SCCResult Scc, const Bridges B, float** W, int** last,
+                                TreeBuffers* tb, const int minHeads = 0) {
+    std::vector<int> S;
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+    {
+        if (B.tailOut[k] <= minHeads) // the in-tree pays off only when this tail has many heads
+        {
+            const float* Wk = W[k];
+            for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s])
+            {
+                const float Wsk = W[s][k];
+                float* Ws = W[s];
+                for (int i = 0; i < B.tailOut[k]; ++i)
+                {
+                    int h = B.tailHead[k][i];
+                    if (Wsk + Wk[h] < Ws[h])
+                    {
+                        Ws[h] = Wsk + Wk[h];
+                        last[s][h] = last[k][h];
+                    }
+                }
+            }
+            continue;
+        }
+        buildInTree(k, t, Scc, last, tb);
+        S.clear();
+        for (int i = 0; i < B.tailOut[k]; ++i) // the root k: all its heads
+            S.push_back(i);
+        bridgeHourglassVisit(k, k, 0, S.size(), B, W, last, tb, S);
+    }
+}
+
+#ifndef HG_MIN_HEADS
+#define HG_MIN_HEADS 16 // tails with at most this many heads are relaxed without building their in-tree (4 was 1.5x slower on Gnutella)
+#endif
+
+// Paper order: bridge step (sources -> heads over Out(C_t)), then reduced relaxation from sources via heads.
+// With hourglass, the bridge step prunes the sources (bridgeStepHourglass); with minHeads > 0 only tails with more
+// than minHeads heads build their in-tree. The heads step uses only out-trees: in-trees of heads cost more than they
+// prune, since there are many heads and most sources reach a head through few tails.
+static void bridgeThenHeads(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb,
+                            const bool hourglass = false, const int minHeads = 0) {
+    if (hourglass)
+        bridgeStepHourglass(t, Scc, B, W, last, tb, minHeads);
+    else
+        bridgeStep(t, Scc, B, W, last);
 
     // Reduced-relaxation step: from all sources via heads to all reachable destinations ----------------------------
     for (int i = 0; i < B.headCount[t]; ++i)
         relaxViaPivot(B.heads[t][i], t, Scc, W, last, tb);
 }
 
+// Groups the edges of Out(C_t) by head: tails of B.heads[t][i] are (*inTails)[(*start)[i] .. (*start)[i+1]).
+// The caller frees *start and *inTails.
+static void groupByHead(const int t, const Bridges B, int* headIdx, int** start, int** inTails) {
+    const int H = B.headCount[t];
+    int* st = (int*)calloc(H + 1, sizeof(int));
+    for (int i = 0; i < H; ++i)
+        headIdx[B.heads[t][i]] = i;
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        for (int i = 0; i < B.tailOut[k]; ++i)
+            st[headIdx[B.tailHead[k][i]] + 1]++;
+    for (int i = 0; i < H; ++i)
+        st[i + 1] += st[i];
+
+    int* pos = (int*)malloc(sizeof(int)*(H + 1));
+    memcpy(pos, st, sizeof(int)*(H + 1));
+    int* in = (int*)malloc(sizeof(int)*(st[H] + 1));
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        for (int i = 0; i < B.tailOut[k]; ++i)
+            in[pos[headIdx[B.tailHead[k][i]]]++] = k;
+    free(pos);
+
+    *start = st;
+    *inTails = in;
+}
+
 #ifndef TREE_MIN_TAILS
 #define TREE_MIN_TAILS 4 // heads with at most this many tails are relaxed without building their out-tree
 #endif
 
-// Swapped order: tails get distances to C^(<t) through their outgoing edges, then reduced relaxation via tails
-static void tailsThenBridge(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb) {
+// Swapped order: tails get distances to C^(<t) through their outgoing edges, then reduced relaxation via tails.
+// With hourglass, the second step also prunes the sources (relaxViaPivotHourglass).
+static void tailsThenBridge(const int t, const SCCResult Scc, const Bridges B, float** W, int** last, TreeBuffers* tb,
+                            const bool hourglass) {
     // Step 1: W[k][d] = min(W[k][d], w(k,h) + W[h][d]) ------------------------------------------------------------
     // Edges are grouped by head, so the out-tree of every head is built once and walked for each of its tails
     const int H = B.headCount[t];
-    int* start = (int*)calloc(H + 1, sizeof(int)); // tails of head i are inTails[start[i] .. start[i+1])
-    for (int i = 0; i < H; ++i)
-        tb->headIdx[B.heads[t][i]] = i;
-    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
-        for (int i = 0; i < B.tailOut[k]; ++i)
-            start[tb->headIdx[B.tailHead[k][i]] + 1]++;
-    for (int i = 0; i < H; ++i)
-        start[i + 1] += start[i];
-
-    int* pos = (int*)malloc(sizeof(int)*(H + 1));
-    memcpy(pos, start, sizeof(int)*(H + 1));
-    int* inTails = (int*)malloc(sizeof(int)*(start[H] + 1));
-    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
-        for (int i = 0; i < B.tailOut[k]; ++i)
-            inTails[pos[tb->headIdx[B.tailHead[k][i]]]++] = k;
+    int *start, *inTails; // tails of head i are inTails[start[i] .. start[i+1])
+    groupByHead(t, B, tb->headIdx, &start, &inTails);
 
     for (int i = 0; i < H; ++i)
     {
@@ -941,12 +1107,18 @@ static void tailsThenBridge(const int t, const SCCResult Scc, const Bridges B, f
         }
     }
     free(inTails);
-    free(pos);
     free(start);
 
     // Step 2: from all sources via tails to all reachable destinations ----------------------------------------------
-    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
-        relaxViaPivot(k, t, Scc, W, last, tb);
+    if (hourglass)
+    {
+        std::vector<int> S;
+        for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+            relaxViaPivotHourglass(k, t, Scc, W, last, tb, S);
+    }
+    else
+        for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+            relaxViaPivot(k, t, Scc, W, last, tb);
 }
 
 // Number of vertices in the components marked in bits
@@ -971,7 +1143,16 @@ static long long bitsSize(const uint64_t* bits, const int words, const long long
 // where t + R(p) is the cost of building (or scanning without a tree) the reach of pivot p, and step1(h) follows
 // tailsThenBridge: deg(h)*(t + R(h)) without the out-tree, (t + R(h)) + deg(h)*R(h) with it.
 // R(k) is the union over the heads of k, computed from component-level reachability bitsets.
-static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
+// If graph is not NULL, relaxation over edges (Algorithm 1 in the paper) is a third choice with cost
+//   over edges:      |C_t|*|Out(C_t)|*R(C_t)
+// where R(C_t) is the number of vertices in C^(<t) reachable from C_t.
+static void edgesPlain(int t, SCCResult Scc, Bridges B, float** W, float** graph, int** last,
+                       int* dst, float* Wp, int* headIdx);
+// With alwaysTails every component goes tails -> bridge without comparing the costs (Vertex-SCC-reverse), with
+// hourglass its second step also prunes the sources.
+static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** W, float** graph, const int n,
+                                  int** last, const bool alwaysTails, const bool hourglass = false,
+                                  const bool alwaysHeads = false) {
     const int C = Scc.sccCount;
     const int words = (C + 63) / 64;
 
@@ -1028,10 +1209,23 @@ static float** AdaptiveBridgeTree(const SCCResult Scc, const Bridges B, float** 
 
         if (out > 0)
         {
-            if (headsCost <= tailsCost)
-                bridgeThenHeads(t, Scc, B, W, last, &tb);
+            long long edgesCost = -1; // -1: relaxation over edges is not considered
+            if (graph != NULL)
+                edgesCost = size*out*bitsSize(bitsT, words, compSize); // bitsT does not contain C_t yet
+
+            if (alwaysHeads)
+                bridgeThenHeads(t, Scc, B, W, last, &tb, hourglass);
+            else if (edgesCost >= 0 && edgesCost < headsCost && edgesCost < tailsCost)
+                edgesPlain(t, Scc, B, W, graph, last, tb.dfs, tb.Wp, tb.headIdx);
+            // Bridge -> heads only if it is estimated at least 20% cheaper: the estimates ignore the pruning, which
+            // helps tails -> bridge more (every head walks its out-tree once for all its tails). With hourglass, the
+            // bridge step of bridge -> heads prunes the sources along in-trees of the tails
+            else if (!alwaysTails && headsCost*100 < tailsCost*80)
+                bridgeThenHeads(t, Scc, B, W, last, &tb, hourglass, HG_MIN_HEADS);
             else
-                tailsThenBridge(t, Scc, B, W, last, &tb);
+                // In-trees in tails -> bridge only for Vertex-SCC-hourglass (alwaysTails): with the cost model they pay
+                // off only on sparse components with many outgoing edges and are slower elsewhere
+                tailsThenBridge(t, Scc, B, W, last, &tb, hourglass && alwaysTails);
         }
 
         bitsT[t / 64] |= (uint64_t)1 << (t % 64);
@@ -1092,10 +1286,30 @@ float** SCCvertex(float** graph, int n) {
     return W;
     }
 
-// SCCvertex, but each component picks the cheaper order of the two steps (bridge -> heads or tails -> bridge)
-float** SCCvertexAdaptive(float** graph, int n) {
+// Without edges between the SCCs nothing has to be relaxed between them, so last and the bridges are not needed:
+// like SCCedge, only Tree on the whole graph (one SCC) or on every SCC separately. Frees the SCC data.
+static bool withoutBridges(float** W, const int n, SCCResult SCCs) {
+    if (ee > 0)
+        return false;
+    if (SCCs.sccCount == 1)
+        ModTree(W, n);
+    else
+        APSPseparately(W, n, SCCs);
+    free(EE); FreeAdjList(); freeSCCs(SCCs);
+    return true;
+}
+
+// SCCvertex, but each component picks the cheaper order of the two steps (bridge -> heads or tails -> bridge),
+// or always tails -> bridge with alwaysTails
+static float** SCCvertexOrder(float** graph, int n, const bool alwaysTails, const bool hourglass = false,
+                              const bool alwaysHeads = false) {
 
     float** W = copy2DArray(graph, n);
+    InitAdjList(n);
+    SCCResult SCCs = findSCCs_addEdges(W, n);
+    if (withoutBridges(W, n, SCCs))
+        return W;
+
     int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
     for (int i=0; i<n; i++)
     {
@@ -1105,13 +1319,10 @@ float** SCCvertexAdaptive(float** graph, int n) {
             last[i][j] = i;
         }
     }
-
-    InitAdjList(n);
-    SCCResult SCCs = findSCCs_addEdges(W, n);
     Bridges B = tEdgesToVertexRelaxSets(SCCs.component, SCCs.sccCount, n);
 
     separatelyTree(W, n , SCCs, last); // solve APSP in each component with Tree
-    AdaptiveBridgeTree(SCCs, B, W, n, last); // APSP between the SCCs
+    AdaptiveBridgeTree(SCCs, B, W, NULL, n, last, alwaysTails, hourglass, alwaysHeads); // APSP between the SCCs
 
     freeBridges(B, n , SCCs.sccCount);
     FreeAdjList(); freeSCCs(SCCs);
@@ -1119,3 +1330,280 @@ float** SCCvertexAdaptive(float** graph, int n) {
 
     return W;
     }
+
+// Vertex-SCC: the cost model picks the cheaper order for every component; the bridge step of bridge -> heads prunes
+// the sources along in-trees of the tails with more than HG_MIN_HEADS heads (Hourglass)
+float** SCCvertexAdaptive(float** graph, int n) {
+    return SCCvertexOrder(graph, n, false, true);
+}
+
+// Vertex-SCC-reverse: always tails -> bridge
+float** SCCvertexReverse(float** graph, int n) {
+    return SCCvertexOrder(graph, n, true);
+}
+
+// Vertex-SCC-hourglass: Vertex-SCC-reverse, the relaxation via tails also prunes the sources along in-trees
+float** SCCvertexHourglass(float** graph, int n) {
+    return SCCvertexOrder(graph, n, true, true);
+}
+
+// Vertex-SCC-bridgeHG: always bridge -> heads, the bridge step prunes the sources along in-trees (Hourglass)
+float** SCCvertexBridgeHG(float** graph, int n) {
+    return SCCvertexOrder(graph, n, false, true, true);
+}
+
+// Relaxation between SCCs without the out-tree ------------------------------------------------------------------------
+
+// Destinations reachable from pivot p (without p) in components 0 .. compEnd-1 with their distances W[p][d]. All
+// vertices of a component are either reachable or not, so one check per component is enough. Returns the number of
+// destinations.
+static int reachList(const int p, const int compEnd, const SCCResult Scc, float** W, int* dst, float* Wp) {
+    const float* Wrow = W[p];
+    int c = 0;
+    for (int comp = 0; comp < compEnd; ++comp)
+    {
+        int d = Scc.firstInComponent[comp];
+        if (!isfinite_cust(Wrow[d]))
+            continue;
+        for (; d != -1; d = Scc.nextInComponent[d])
+        {
+            if (d == p)
+                continue;
+            dst[c] = d;
+            Wp[c] = Wrow[d];
+            c++;
+        }
+    }
+    return c;
+}
+
+// Bridge step, then from all sources via heads to all reachable destinations (every destination is checked)
+static void bridgeThenHeadsPlain(const int t, const SCCResult Scc, const Bridges B, float** W, int** last,
+                                 int* dst, float* Wp) {
+    bridgeStep(t, Scc, B, W, last);
+
+    for (int i = 0; i < B.headCount[t]; ++i)
+    {
+        int h = B.heads[t][i];
+        int c = reachList(h, Scc.component[h] + 1, Scc, W, dst, Wp);
+        for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s]) // sources
+        {
+            float Wsh = W[s][h];
+            if (!isfinite_cust(Wsh))
+                continue;
+            float* Ws = W[s];
+            for (int v = 0; v < c; ++v)
+            {
+                int d = dst[v];
+                if (Wsh + Wp[v] < Ws[d])
+                {
+                    Ws[d] = Wsh + Wp[v];
+                    last[s][d] = last[h][d];
+                }
+            }
+        }
+    }
+}
+
+// Relaxation over edges: W[x][d] = min(W[x][d], W[x][k] + w(k,h) + W[h][d]) for all sources x in C_t and edges (k,h)
+// in Out(C_t). Edges are grouped by head, so the destinations of every head are collected once.
+static void edgesPlain(const int t, const SCCResult Scc, const Bridges B, float** W, float** graph, int** last,
+                       int* dst, float* Wp, int* headIdx) {
+    int *start, *inTails; // tails of head i are inTails[start[i] .. start[i+1])
+    groupByHead(t, B, headIdx, &start, &inTails);
+
+    for (int i = 0; i < B.headCount[t]; ++i)
+    {
+        int h = B.heads[t][i];
+        int c = reachList(h, Scc.component[h] + 1, Scc, W, dst, Wp);
+        for (int j = start[i]; j < start[i + 1]; ++j)
+        {
+            int k = inTails[j];
+            float wkh = graph[k][h];
+            if (W[k][h] < wkh) // a shorter path from k to h exists, so this edge is on no shortest path
+                continue;
+            for (int x = Scc.firstInComponent[t]; x != -1; x = Scc.nextInComponent[x]) // sources
+            {
+                float* Wx = W[x];
+                float a = Wx[k] + wkh;
+                if (a < Wx[h])
+                {
+                    Wx[h] = a;
+                    last[x][h] = k;
+                }
+                for (int v = 0; v < c; ++v)
+                {
+                    int d = dst[v];
+                    if (a + Wp[v] < Wx[d])
+                    {
+                        Wx[d] = a + Wp[v];
+                        last[x][d] = last[h][d];
+                    }
+                }
+            }
+        }
+    }
+    free(inTails);
+    free(start);
+}
+
+// Swapped order without the out-tree: tails get distances to C^(<t) through their outgoing edges, then from all
+// sources via tails to every reachable destination
+static void tailsThenBridgePlain(const int t, const SCCResult Scc, const Bridges B, float** W, int** last,
+                                 int* dst, float* Wp) {
+    // Step 1: W[k][d] = min(W[k][d], w(k,h) + W[h][d]) ------------------------------------------------------------
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+    {
+        float* Wk = W[k];
+        for (int i = 0; i < B.tailOut[k]; ++i)
+        {
+            int h = B.tailHead[k][i];
+            float Wkh = Wk[h];
+            int c = reachList(h, Scc.component[h] + 1, Scc, W, dst, Wp);
+            for (int v = 0; v < c; ++v)
+            {
+                int d = dst[v];
+                if (Wkh + Wp[v] < Wk[d])
+                {
+                    Wk[d] = Wkh + Wp[v];
+                    last[k][d] = last[h][d];
+                }
+            }
+        }
+    }
+
+    // Step 2: from all sources via tails to every reachable destination in C^(<t) -----------------------------------
+    for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+    {
+        int c = reachList(k, t, Scc, W, dst, Wp);
+        for (int s = Scc.firstInComponent[t]; s != -1; s = Scc.nextInComponent[s]) // sources
+        {
+            if (s == k)
+                continue;
+            float Wsk = W[s][k];
+            float* Ws = W[s];
+            for (int v = 0; v < c; ++v)
+            {
+                int d = dst[v];
+                if (Wsk + Wp[v] < Ws[d])
+                {
+                    Ws[d] = Wsk + Wp[v];
+                    last[s][d] = last[k][d];
+                }
+            }
+        }
+    }
+}
+
+// APSP between the SCCs without the out-tree. For every component picks the cheaper order, with R(v) = number of
+// vertices in C^(<t) reachable from v:
+//   bridge -> heads: |C_t|*|Out(C_t)| + sum_{h in H_t} (t + |C_t|*R(h))
+//   tails -> bridge: sum_{(k,h) in Out(C_t)} (t + R(h)) + sum_{k in I_t} (t + |C_t|*R(k))
+// Costs within 1% count as equal and go to tails -> bridge.
+static float** PlainBridge(const SCCResult Scc, const Bridges B, float** W, const int n, int** last) {
+    const int C = Scc.sccCount;
+    const int words = (C + 63) / 64;
+    int* dst = (int*)malloc(sizeof(int)*n);
+    float* Wp = (float*)malloc(sizeof(float)*n);
+
+    long long* compSize = (long long*)calloc(C, sizeof(long long));
+    for (int v = 0; v < n; ++v)
+        compSize[Scc.component[v]]++;
+    uint64_t* reachBits = (uint64_t*)calloc((size_t)C*words, sizeof(uint64_t)); // components reachable from component c
+    long long* reachSize = (long long*)malloc(sizeof(long long)*C);              // vertices reachable from component c
+    uint64_t* tailBits = (uint64_t*)malloc(sizeof(uint64_t)*words);
+
+    for (int t = 0; t < C; ++t)
+    {
+        uint64_t* bitsT = reachBits + (size_t)t*words;
+        long long size = compSize[t];
+        long long out = 0, headsCost = 0, tailsCost = 0;
+
+        for (int k = B.firstTail[t]; k != -1; k = B.nextTail[k])
+        {
+            memset(tailBits, 0, sizeof(uint64_t)*words);
+            for (int i = 0; i < B.tailOut[k]; ++i)
+            {
+                int hc = Scc.component[B.tailHead[k][i]];
+                tailsCost += t + reachSize[hc];
+                const uint64_t* bitsH = reachBits + (size_t)hc*words;
+                for (int w = 0; w < words; ++w)
+                    tailBits[w] |= bitsH[w];
+            }
+            tailsCost += t + size*bitsSize(tailBits, words, compSize);
+            out += B.tailOut[k];
+        }
+
+        for (int i = 0; i < B.headCount[t]; ++i)
+        {
+            int hc = Scc.component[B.heads[t][i]];
+            headsCost += t + size*reachSize[hc];
+            const uint64_t* bitsH = reachBits + (size_t)hc*words;
+            for (int w = 0; w < words; ++w)
+                bitsT[w] |= bitsH[w];
+        }
+        headsCost += size*out;
+
+        if (out > 0)
+        {
+            if (headsCost*100 < tailsCost*99)
+                bridgeThenHeadsPlain(t, Scc, B, W, last, dst, Wp);
+            else
+                tailsThenBridgePlain(t, Scc, B, W, last, dst, Wp);
+        }
+
+        bitsT[t / 64] |= (uint64_t)1 << (t % 64);
+        reachSize[t] = bitsSize(bitsT, words, compSize);
+    }
+
+    free(tailBits);
+    free(reachSize);
+    free(reachBits);
+    free(compSize);
+    free(Wp);
+    free(dst);
+    return W;
+    }
+
+// Shared setup of SCCvertexNoTree and SCCedgeOrVertex
+static float** SCCvertexWith(float** graph, int n, const bool edgeOrVertex) {
+
+    float** W = copy2DArray(graph, n);
+    InitAdjList(n);
+    SCCResult SCCs = findSCCs_addEdges(W, n);
+    if (withoutBridges(W, n, SCCs))
+        return W;
+
+    int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
+    for (int i=0; i<n; i++)
+    {
+        last[i] = (int*)malloc(sizeof(int)*n);
+        for (int j=0; j<n; j++)
+        {
+            last[i][j] = i;
+        }
+    }
+    Bridges B = tEdgesToVertexRelaxSets(SCCs.component, SCCs.sccCount, n);
+
+    separatelyTree(W, n , SCCs, last); // solve APSP in each component with Tree
+    if (edgeOrVertex)
+        AdaptiveBridgeTree(SCCs, B, W, graph, n, last, false); // APSP between the SCCs, cheapest of three per component
+    else
+        PlainBridge(SCCs, B, W, n, last); // APSP between the SCCs
+
+    freeBridges(B, n , SCCs.sccCount);
+    free(EE); FreeAdjList(); freeSCCs(SCCs);
+    free2DInt(last, n);
+
+    return W;
+    }
+
+// SCCvertex, but relaxation via heads checks every reachable destination (no out-tree)
+float** SCCvertexNoTree(float** graph, int n) {
+    return SCCvertexWith(graph, n, false);
+}
+
+// SCCvertexAdaptive, but each component may also relax over edges if the estimate from the paper is the smallest
+float** SCCedgeOrVertex(float** graph, int n) {
+    return SCCvertexWith(graph, n, true);
+}

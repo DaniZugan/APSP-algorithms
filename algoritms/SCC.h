@@ -79,10 +79,15 @@ typedef struct {
     GraphAdjMatrix matrika;
 } GraphDual;
 
-float** SCCalgo(float** graph, int N);
+float** SCCedge(float** graph, int N);
 float** SCCalgo2(float** graph, int N);
 float** SCCvertex(float** graph, int N);
 float** SCCvertexAdaptive(float** graph, int N);
+float** SCCvertexReverse(float** graph, int N);
+float** SCCvertexHourglass(float** graph, int N);
+float** SCCvertexBridgeHG(float** graph, int N);
+float** SCCvertexNoTree(float** graph, int N);
+float** SCCedgeOrVertex(float** graph, int N);
 
 SCCResult findSCCs(float** graph, int n);
 SCCResult findSCCs_addEdges(float** graph, int n);

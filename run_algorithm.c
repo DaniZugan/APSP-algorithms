@@ -291,6 +291,12 @@ static int compareWithReference(float** mat, int n, void* ctx)
 // against; if it does not finish, the others are still timed but not checked.
 double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 {
+	return RunTestWithLimit(graph, n, algs, mStar, MAX_INSTANCE_TIME);
+}
+
+// RunTest with a time limit of limit seconds for every algorithm.
+double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, double limit)
+{
 	int size = 0;
 	for (int i=0; algs[i] != NULL; i++) {
 		size++;
@@ -304,7 +310,7 @@ double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 	int errors = 0;
 	RunStatus status = RUN_CRASH;
 	if (refData != NULL)
-		status = RunAlgorithmTimed(graph, n, algs[0], MAX_INSTANCE_TIME, &(results[0]), NULL, NULL, refData, &errors);
+		status = RunAlgorithmTimed(graph, n, algs[0], limit, &(results[0]), NULL, NULL, refData, &errors);
 	else
 		printf("Cannot allocate the reference matrix\n");
 
@@ -339,7 +345,7 @@ double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 
 	for (int i=1; i<size; i++)
 	{
-		status = RunAlgorithmTimed(graph, n, algs[i], MAX_INSTANCE_TIME, &(results[i]),
+		status = RunAlgorithmTimed(graph, n, algs[i], limit, &(results[i]),
 								   ref ? compareWithReference : NULL, ref, NULL, &errors);
 		if (status == RUN_WRONG)
 			printf("Algorithm %d: WRONG, %d entries differ from the reference\n", i, errors);
@@ -1340,6 +1346,7 @@ void RunGnutellaTest(AlgorithmFP* algs, char** algNames)
             	strcat(filename, "/");
             	strcat(filename, files[z]);
             	//printf("Running Gnutella test -> %s\n", filename);
+            	double fileId = atof(files[z]);
             	Graf graf = GenerateGraphGnutella(filename);
                 float** graph = graf.matrix;
             	int n = graf.size;
@@ -1348,7 +1355,7 @@ void RunGnutellaTest(AlgorithmFP* algs, char** algNames)
 
                 int mStar = 0;
             	//printf("Running algorithms... \n");
-                results[run] = RunTest(graph, n, algs, &mStar);
+                results[run] = RunTestWithLimit(graph, n, algs, &mStar, GNUTELLA_INSTANCE_TIME);
 				//printf("Histogram\n");
             	//int* histogram = graphHistogram(graph, n, false);
             	//int max = 0; // size of largest WCC
@@ -1362,7 +1369,7 @@ void RunGnutellaTest(AlgorithmFP* algs, char** algNames)
             	//int SCCedges = countEdges(SCCgraph, largestSCCSize);
 				//printf("Writing to .csv");
             	//csvViz(run, results, algCount, algNames, edgeFactors[z], n, graphEdges, max, WCCedges, largestSCCSize, SCCedges);
-				getGraphDataAndWriteCsv(output, graph, n, run, results, algCount, algNames, edgeFactors, z);
+				getGraphDataAndWriteCsv(output, graph, n, run, results, algCount, algNames, &fileId, 0); // id from the file name (04.txt -> 4), readdir order is not sorted
             	//free(histogram);
             	freeGraph(graf.matrix, graf.size);
             	//freeGraph(WCCgraph, max);
@@ -1427,6 +1434,7 @@ void RunTxtTest(AlgorithmFP* algs, char** algNames)
             	strcat(filename, "/");
             	strcat(filename, files[z]);
             	//printf("Running Gnutella test -> %s\n", filename);
+            	double fileId = atof(files[z]);
             	Graf graf = GenerateGraphTxt(filename);
                 float** graph = graf.matrix;
             	int n = graf.size;
@@ -1436,7 +1444,7 @@ void RunTxtTest(AlgorithmFP* algs, char** algNames)
             	//printf("Running algorithms... \n");
                 results[run] = RunTest(graph, n, algs, &mStar);
 
-				getGraphDataAndWriteCsv(output, graph, n, run, results, algCount, algNames, edgeFactors, z);
+				getGraphDataAndWriteCsv(output, graph, n, run, results, algCount, algNames, &fileId, 0); // id from the file name, readdir order is not sorted
             	freeGraph(graf.matrix, graf.size);
             }
             double** avgResults = ComputeAvg(results, algCount, TESTRUNS);
