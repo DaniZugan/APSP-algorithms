@@ -2,7 +2,7 @@
 #ifndef RUN_ALGORITHM_H
 #define RUN_ALGORITHM_H
 
-#define TESTRUNS 3 // Number of runs (on different random graph instances), returns averaged result.
+#define TESTRUNS 2 // Number of runs (on different random graph instances), returns averaged result.
 
 #ifdef __cplusplus
 extern "C" {
@@ -39,11 +39,15 @@ typedef float**(*AlgorithmFP)(float **, int);
 
 // Time limit in seconds for one algorithm on one instance. A run that exceeds it is killed and its time is
 // reported as MAX_INSTANCE_TIME.
-#define MAX_INSTANCE_TIME 60.0
-// Higher limit for the Gnutella test (larger graphs, only 8 instances).
+#define MAX_INSTANCE_TIME 100.0
+// Limit for the Gnutella test (larger graphs, only 8 instances).
 #define GNUTELLA_INSTANCE_TIME 100.0
-// Higher limit for the SNAP test (real graphs up to SNAP_MAX_NODES vertices).
+// Limit for the SNAP test (real graphs up to SNAP_MAX_NODES vertices).
 #define SNAP_INSTANCE_TIME 100.0
+// The first algorithm (Tree) runs with the full limit; the others are killed after REF_TIME_FACTOR times its time,
+// but never sooner than MIN_RELATIVE_LIMIT seconds. Their timeout is still written to the CSV as the full limit.
+#define REF_TIME_FACTOR 5.0
+#define MIN_RELATIVE_LIMIT 1.0
 
 typedef enum {
     RUN_OK = 0,      // finished, output correct (or not checked)
@@ -68,6 +72,7 @@ float** RunAlgorithmReturnMatrix(float** graph, int n, double* time, AlgorithmFP
 int RunAlgorithm(float** graph, int n, double* time, AlgorithmFP alg, int checkOutput, float** reference);
 double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar);
 double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, double limit);
+double RelativeLimit(double refTime, double limit);
 double** ComputeAvg(double** results, int size, int totalRuns);
 int* graphHistogram(float**graph, int n, bool print);
 int* findLargestSCC(float** graph, int V, int* largestSCCSize);

@@ -490,8 +490,14 @@ void Run_SNAP_Test(AlgorithmFP* algs, char** algNames)
 
             for (int i = 0; i < algCount; ++i) {
                 int wrongRows = 0;
-                status[i] = RunAlgorithmTimed(graph, n, algs[i], SNAP_INSTANCE_TIME, &times[i],
+                // algs[0] (Tree) gets the full limit, the others a multiple of its time
+                double limit = i == 0 ? SNAP_INSTANCE_TIME
+                                      : RelativeLimit(status[0] == RUN_TIMEOUT ? SNAP_INSTANCE_TIME : times[0],
+                                                      SNAP_INSTANCE_TIME);
+                status[i] = RunAlgorithmTimed(graph, n, algs[i], limit, &times[i],
                                               snapCheck, &csr, NULL, &wrongRows);
+                if (status[i] == RUN_TIMEOUT)
+                    times[i] = SNAP_INSTANCE_TIME;
 
                 printf("%-20s %8.3f s  %s\n", algNames[i], times[i], RunStatusName(status[i]));
                 if (status[i] == RUN_WRONG)
