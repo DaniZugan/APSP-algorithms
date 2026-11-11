@@ -621,6 +621,20 @@ Graf GenerateGraphGnutella(char* filename) {
         fprintf(stderr, "Error: Could not determine number of nodes\n");
     }
 
+    // The header count can be lower than the largest id (04.txt has ids up to 10878 with Nodes: 10876),
+    // so N is raised to cover every id.
+    long dataStart = ftell(file) - (long)strlen(line);
+    int src, dest;
+    do {
+        if (line[0] != '#' && sscanf(line, "%d %d", &src, &dest) == 2) {
+            if (src >= N) N = src + 1;
+            if (dest >= N) N = dest + 1;
+        }
+    } while (fgets(line, sizeof(line), file));
+    fseek(file, dataStart, SEEK_SET);
+    if (!fgets(line, sizeof(line), file))
+        line[0] = '\0';
+
     //printf("Number of nodes = %d\n", N);
 
     float** graph = createGraph(N);
@@ -631,10 +645,9 @@ Graf GenerateGraphGnutella(char* filename) {
         }
     }
 
-    int src, dest;
     do {
         if (line[0] == '#' || strlen(line) < 2) continue; // skip empty or comment
-        if (sscanf(line, "%d %d", &src, &dest) == 2) {
+        if (sscanf(line, "%d %d", &src, &dest) == 2 && src >= 0 && dest >= 0) {
             graph[src][dest] = frand();
         }
     } while (fgets(line, sizeof(line), file));
