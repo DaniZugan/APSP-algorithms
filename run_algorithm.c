@@ -287,23 +287,20 @@ static int compareWithReference(float** mat, int n, void* ctx)
 	return diffs;
 }
 
-// Runs all algorithms with the MAX_INSTANCE_TIME limit. The first algorithm is the reference the others are checked
+// Time limit for a synthetic graph with n vertices: MAX_INSTANCE_TIME per LIMIT_BASE_N vertices, at least MAX_INSTANCE_TIME
+double InstanceLimit(int n)
+{
+	return fmax(MAX_INSTANCE_TIME, MAX_INSTANCE_TIME * n / LIMIT_BASE_N);
+}
+
+// Runs all algorithms with the InstanceLimit(n) limit. The first algorithm is the reference the others are checked
 // against; if it does not finish, the others are still timed but not checked.
 double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 {
-	return RunTestWithLimit(graph, n, algs, mStar, MAX_INSTANCE_TIME);
+	return RunTestWithLimit(graph, n, algs, mStar, InstanceLimit(n));
 }
 
-// Time limit for the other algorithms when the reference took refTime seconds (the full limit if it did not finish).
-double RelativeLimit(double refTime, double limit)
-{
-	if (refTime <= 0 || refTime >= limit)
-		return limit;
-	double rel = fmax(REF_TIME_FACTOR * refTime, MIN_RELATIVE_LIMIT);
-	return fmin(rel, limit);
-}
-
-// RunTest with a time limit of limit seconds for the reference and RelativeLimit for the other algorithms.
+// RunTest with a time limit of limit seconds for every algorithm.
 double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, double limit)
 {
 	int size = 0;
@@ -352,13 +349,10 @@ double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, do
 		printf("Algorithm 0 (reference): %s, other algorithms are not checked\n", RunStatusName(status));
 	}
 
-	double algLimit = RelativeLimit(status == RUN_OK ? results[0] : limit, limit);
 	for (int i=1; i<size; i++)
 	{
-		status = RunAlgorithmTimed(graph, n, algs[i], algLimit, &(results[i]),
+		status = RunAlgorithmTimed(graph, n, algs[i], limit, &(results[i]),
 								   ref ? compareWithReference : NULL, ref, NULL, &errors);
-		if (status == RUN_TIMEOUT)
-			results[i] = limit; // the CSV marks every timeout with the full limit
 		if (status == RUN_WRONG)
 			printf("Algorithm %d: WRONG, %d entries differ from the reference\n", i, errors);
 		else if (status != RUN_OK)

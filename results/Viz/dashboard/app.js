@@ -60,6 +60,9 @@ function statusFromTime(t, limit) {
   return "ok";
 }
 
+// InstanceLimit in run_algorithm.c: the synthetic limit is per 4096 vertices (120 s for 8192), never less than limit
+const instanceLimit = (limit, n) => Math.max(limit, limit * n / 4096);
+
 function addDerived(p) {
   p["tails/heads"] = p.heads ? p.tails / p.heads : NaN;
   p["largestSCC/N"] = p.N ? p.largestSCCVertices / p.N : NaN;
@@ -83,14 +86,15 @@ function loadRandom(rows, limit) {
   for (const r of rows.slice(1)) {
     if (r.length < head.length) continue; // interrupted run
     const times = {}, status = {}, props = {};
-    algs.forEach((a, i) => { times[a] = num(r[i]); status[a] = statusFromTime(times[a], limit); });
     for (let i = k; i < head.length; i++) props[head[i]] = num(r[i]);
+    const nLimit = instanceLimit(limit, props.N);
+    algs.forEach((a, i) => { times[a] = num(r[i]); status[a] = statusFromTime(times[a], nLimit); });
     addDerived(props);
     const comps = Number.isFinite(props.comps) ? props.comps : props.sccCount;
     props.kType = kType(comps, props.N);
     // componentProb = 2/k depends on k, so all of them share the code 0 (the CSV keeps 3 decimals)
     if (props.componentProb < 1 && Math.abs(props.componentProb - Math.round(2000 / comps) / 1000) < 1e-6) props.componentProb = 0;
-    instances.push({ props, times, status });
+    instances.push({ props, times, status, limit: nLimit });
   }
   // For k = 2, 2/k = 1, so both runs are written as 1.000. The test runs 2/k first: the first half of the rows
   // with the same parameters is 2/k.
@@ -528,7 +532,7 @@ function viewOverview() {
         h("h3", {}, h("span", { class: "sw-dot", style: `background:${colorOf(i.name)}` }), i.name),
         h("p", { class: "small" }, i.text))))),
     panel("Time limit", null, null, prose(
-      `Each algorithm gets <b>${state.limit} s</b> per graph` +
+      `Each algorithm gets <b>${state.limit} s</b> per graph with 4096 vertices and proportionally more on larger graphs (<b>${2 * state.limit} s</b> for 8192)` +
       (() => {
         const other = ["gnutella", "snap"].filter(k => limitOf(k) !== state.limit)
           .map(k => `<b>${limitOf(k)} s</b> for ${KIND_NAMES[k]}`);
@@ -825,7 +829,7 @@ function loadText(text, name, key) {
   const limit = limitOf(kind);
   const ds = LOADERS[kind](readRows(text), limit);
   if (!ds.instances.length) { console.warn(`${name}: no result rows`); return; }
-  for (const i of ds.instances) i.limit = limit;
+  for (const i of ds.instances) i.limit ??= limit;
   state.data[kind] = ds;
   state.sources[kind] = name;
 }
