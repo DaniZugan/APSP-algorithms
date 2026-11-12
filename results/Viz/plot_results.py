@@ -78,6 +78,11 @@ def time_limits():
             "gnutella": read_define("GNUTELLA_INSTANCE_TIME", limit)}
 
 
+def instance_limit(limit, n):
+    """InstanceLimit in run_algorithm.c: limit per LIMIT_BASE_N vertices, never less than limit."""
+    return max(limit, limit * n / read_define("LIMIT_BASE_N", 4096))
+
+
 def status_from_time(t, limit):
     """RunTest writes only the time to the CSV: the limit means TIMEOUT, -1 means CRASH."""
     if not math.isfinite(t) or t < 0: return "CRASH"
@@ -146,8 +151,9 @@ def load_random(path, limit):
             props["componentProb"] = 0
         label = "n={:g} k={:g} out={:g} in={:g} comp={}".format(props["N"], comps, props["outProb"], props["inProb"],
                                                               comp_label(props["componentProb"]))
+        n_limit = instance_limit(limit, props["N"])
         inst.append({"label": label, "props": props, "times": times,
-                     "status": {a: status_from_time(t, limit) for a, t in times.items()}})
+                     "status": {a: status_from_time(t, n_limit) for a, t in times.items()}})
     split_k2(inst)
     return make_dataset("randomSizeSCC", algs, inst)
 
