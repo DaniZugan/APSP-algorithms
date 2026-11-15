@@ -3,6 +3,7 @@
 #define RUN_ALGORITHM_H
 
 #define TESTRUNS 2 // Number of runs (on different random graph instances), returns averaged result.
+#define STAR_TESTRUNS 10 // Runs per size in the star SCC test (it has only one parameter combination per size)
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,15 +38,15 @@ typedef struct {
 
 typedef float**(*AlgorithmFP)(float **, int);
 
-// Time limit in seconds for one algorithm on a synthetic graph with LIMIT_BASE_N vertices. Larger graphs get a
-// proportionally longer limit (60 s for 4096, 120 s for 8192), never less than MAX_INSTANCE_TIME (see InstanceLimit).
-// A run that exceeds it is killed and its time is reported as the limit.
+// Time limit in seconds for one algorithm on a synthetic graph with at most LIMIT_BASE_N vertices; larger graphs
+// get LARGE_INSTANCE_TIME (see InstanceLimit). A run that exceeds it is killed and its time is reported as the limit.
 #define MAX_INSTANCE_TIME 60.0
+#define LARGE_INSTANCE_TIME 180.0
 #define LIMIT_BASE_N 4096
 // Limit for the Gnutella test (larger graphs, only 8 instances).
-#define GNUTELLA_INSTANCE_TIME 120.0
+#define GNUTELLA_INSTANCE_TIME 180.0
 // Limit for the SNAP test (real graphs up to SNAP_MAX_NODES vertices).
-#define SNAP_INSTANCE_TIME 120.0
+#define SNAP_INSTANCE_TIME 180.0
 
 typedef enum {
     RUN_OK = 0,      // finished, output correct (or not checked)
@@ -60,6 +61,9 @@ typedef int (*CheckFP)(float** mat, int n, void* ctx);
 // Shared n x n matrix that a child process can write its result into (row-major, unmap with FreeSharedMatrix)
 float* CreateSharedMatrix(int n);
 void FreeSharedMatrix(float* matrix, int n);
+
+// Step time between the SCCs (SCCStepTime) reported by the last RunAlgorithmTimed run, -1 if not measured
+extern double LastStepTime;
 
 RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit, double* time,
                             CheckFP check, void* ctx, float* out, int* errors);

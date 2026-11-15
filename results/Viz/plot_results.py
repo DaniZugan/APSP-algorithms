@@ -74,13 +74,14 @@ def read_define(name, default):
 def time_limits():
     """Time limit of each test, as set in run_algorithm.h (Gnutella and SNAP have their own)."""
     limit = read_define("MAX_INSTANCE_TIME", 60.0)
-    return {"random": limit, "equal": limit, "star": limit, "snap": read_define("SNAP_INSTANCE_TIME", limit),
+    return {"random": limit, "equal": limit, "star": limit, "large": read_define("LARGE_INSTANCE_TIME", 3 * limit),
+            "snap": read_define("SNAP_INSTANCE_TIME", limit),
             "gnutella": read_define("GNUTELLA_INSTANCE_TIME", limit)}
 
 
 def instance_limit(limit, n):
-    """InstanceLimit in run_algorithm.c: limit per LIMIT_BASE_N vertices, never less than limit."""
-    return max(limit, limit * n / read_define("LIMIT_BASE_N", 4096))
+    """InstanceLimit in run_algorithm.c: limit up to LIMIT_BASE_N vertices, LARGE_INSTANCE_TIME above."""
+    return read_define("LARGE_INSTANCE_TIME", 3 * limit) if n > read_define("LIMIT_BASE_N", 4096) else limit
 
 
 def status_from_time(t, limit):
@@ -164,7 +165,7 @@ def split_k2(inst):
     groups = {}
     for i in inst:
         p = i["props"]
-        if p.get("comps", p["sccCount"]) == 2 and p["componentProb"] == 1:
+        if p.get("comps", p["sccCount"]) == 2 and p["componentProb"] == 1 and p["outProb"] != -1:  # star: k = 2 once
             groups.setdefault((p["N"], p["outProb"], p["inProb"], p.get("equalSizes")), []).append(i)
     for g in groups.values():
         for i in g[:len(g) // 2]:

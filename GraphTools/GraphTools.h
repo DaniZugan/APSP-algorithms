@@ -13,7 +13,7 @@ extern "C" {
     void Run_WorstCase_Test(AlgorithmFP* algs, char** algNames);
     void Run_RandomSizeSCC_Test(AlgorithmFP* algs, char** algNames);
     void Run_EqualSizeSCC_Test(AlgorithmFP* algs, char** algNames);      // RandomSizeSCC with equally sized SCCs
-    void Run_StarSCC_Test(AlgorithmFP* algs, char** algNames);           // RandomSizeSCC, 1 tail -> all heads or all tails -> 1 head
+    void Run_StarSCC_Test(AlgorithmFP* algs, char** algNames);           // 2 equal SCCs, 1 tail -> all heads or all tails -> 1 head
     void Export_SCCGraph(int n, int comps, double outgoingProb, double internalProb, double coin, int star,
                          const char* path);                                 // edge list for results/Viz/SCC/draw_graph.py
     void Run_SNAP_Test(AlgorithmFP* algs, char** algNames);

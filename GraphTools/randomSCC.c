@@ -33,6 +33,11 @@ static int resolveComps(int comps, int n)
 // Posebna vrednost v componentProb[], ki je odvisna od števila komponent k.
 #define COMP_PROB_2_K (-1.0)  // 2/k: pričakovano k - 1 povezanih parov komponent, kot drevo
 
+// Vrednosti star v SCCGraph: kako sta povezani komponenti v paru.
+#define STAR_RANDOM        1  // naključno eno ali drugo
+#define STAR_TAILS_TO_HEAD 2  // vsi taili -> en head
+#define STAR_TAIL_TO_HEADS 3  // en tail -> vsi headi
+
 static double resolveCompProb(double componentProb, int k)
 {
     if (componentProb == COMP_PROB_2_K)
@@ -238,7 +243,8 @@ static float** SCCGraph(int n, int comps, double outgoingProb, double internalPr
             }
 
             if (star) {
-                if (rand() % 2) {
+                int oneTail = star == STAR_RANDOM ? rand() % 2 : star == STAR_TAIL_TO_HEADS;
+                if (oneTail) {
                     /* En tail v komponenti i, vsi headi v komponenti j. */
                     int a = tail[i];
                     for (int b = cuts[j]; b < cuts[j + 1]; ++b) {
@@ -335,6 +341,8 @@ static void csv_SCCRow(const char* path, int run, double** results, int algCount
     fclose(csvFile);
 }
 
+#define STAR_STEPS_CSV "../results/starSteps_data.csv"
+
 // Run tests on graphs with randomly sized SCCs. With star, pairs of components are joined as in StarSCCGraph,
 // with equal all SCCs have the same size.
 static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
@@ -352,11 +360,18 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
 
     int sizes[] = {4096, 8192};
     int comps[] = {2, 4, COMPS_LOG_N, COMPS_SQRT_N};
+    // Star graphs have only 2 SCCs, always joined (1 tail -> all heads or all tails -> 1 head, chosen at random)
+    size_t compsCount = star ? 1 : sizeof(comps) / sizeof(comps[0]);
 
     double outProb[] = {0.001, 0.01, 0.5, 1.0};
-    size_t outCount = star ? 1 : sizeof(outProb) / sizeof(outProb[0]); // star graphs do not use outProb
+    // Star graphs do not use outProb; their out loop runs the two directions: first all tails -> 1 head, then
+    // 1 tail -> all heads, each with its own averages
+    int starDirs[] = {STAR_TAILS_TO_HEAD, STAR_TAIL_TO_HEADS};
+    size_t outCount = star ? 2 : sizeof(outProb) / sizeof(outProb[0]);
     double inProb[] = {1.0};
     double componentProb[] = {COMP_PROB_2_K, 1.0};
+    size_t compProbCount = star ? 1 : sizeof(componentProb) / sizeof(componentProb[0]); // 2/k = 1 for k = 2
+    int runs = star ? STAR_TESTRUNS : TESTRUNS; // star has a single parameter combination per size
 
     // Create the CSV header, overwriting previous results.
     FILE* csvFile = fopen(path, "w");
@@ -387,10 +402,24 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
     writeGraphDataHeader(csvFile);
     fclose(csvFile);
 
+    // Star: also the time of the step between the SCCs alone (SCCStepTime), -1 for algorithms that do not measure it.
+    // direction: tails = 1 -> one tail to all heads, heads = 1 -> all tails to one head.
+    if (star) {
+        FILE* stepFile = fopen(STAR_STEPS_CSV, "w");
+        if (stepFile != NULL) {
+            fprintf(stepFile, "N,direction,tails,heads,outgoingEdges,");
+            for (int i = 0; i < algCount; ++i)
+                fprintf(stepFile, "%s,", algNames[i]);
+            for (int i = 0; i < algCount; ++i)
+                fprintf(stepFile, "%s step%s", algNames[i], i + 1 < algCount ? "," : "\n");
+            fclose(stepFile);
+        }
+    }
+
     for (size_t z = 0; z < sizeof(sizes) / sizeof(sizes[0]); ++z) {
         int n = sizes[z];
 
-        for (size_t s = 0; s < sizeof(comps) / sizeof(comps[0]); ++s) {
+        for (size_t s = 0; s < compsCount; ++s) {
             int k = resolveComps(comps[s], n);
 
             for (size_t out = 0; out < outCount; ++out) {
@@ -398,15 +427,14 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
                 for (size_t in = 0;
                      in < sizeof(inProb) / sizeof(inProb[0]); ++in) {
 
-                    for (size_t cp = 0;
-                         cp < sizeof(componentProb) /
-                              sizeof(componentProb[0]); ++cp) {
+                    for (size_t cp = 0; cp < compProbCount; ++cp) {
                         double compProb = resolveCompProb(componentProb[cp], k);
 
                         printf("N = %d, comps = %d, %s sizes\n", n, k, equal ? "equal" : "random");
                         if (star)
-                            printf("inProb = %.3f, componentProb = %.3f\n===========\n",
-                                   inProb[in], compProb);
+                            printf("%s, inProb = %.3f\n===========\n",
+                                   starDirs[out] == STAR_TAILS_TO_HEAD ? "all tails -> 1 head" : "1 tail -> all heads",
+                                   inProb[in]);
                         else
                             printf("outProb = %.3f, inProb = %.3f, "
                                    "componentProb = %.3f\n===========\n",
@@ -414,7 +442,7 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
                                    compProb);
 
                         double** results =
-                            malloc(sizeof(double*) * TESTRUNS);
+                            malloc(sizeof(double*) * runs);
 
                         if (results == NULL) {
                             fprintf(stderr,
@@ -422,11 +450,11 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
                             return;
                         }
 
-                        for (int run = 0; run < TESTRUNS; ++run) {
+                        for (int run = 0; run < runs; ++run) {
                             // Generate a new graph for each run.
                             struct SCCdata SCCviz = create_scc_data(k);
                             float** graph = SCCGraph(n, k, star ? 0.0 : outProb[out], inProb[in], compProb,
-                                                     &SCCviz, star, equal);
+                                                     &SCCviz, star ? starDirs[out] : 0, equal);
 
                             csv_export(SCCviz, vizPrefix);
 
@@ -450,6 +478,18 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
                             results[run] =
                                 RunTest(graph, n, algs, &mStar);
 
+                            if (star) {
+                                FILE* stepFile = fopen(STAR_STEPS_CSV, "a");
+                                if (stepFile != NULL) {
+                                    fprintf(stepFile, "%d,%s,%d,%d,%d,", n,
+                                            starDirs[out] == STAR_TAILS_TO_HEAD ? "tails->head" : "tail->heads",
+                                            data.tailCount, data.headCount, data.outgoingEdges);
+                                    for (int i = 0; i < 2*algCount; ++i) // times, then step times (see RunTestWithLimit)
+                                        fprintf(stepFile, "%.4lf%s", results[run][i], i + 1 < 2*algCount ? "," : "\n");
+                                    fclose(stepFile);
+                                }
+                            }
+
                             // outProb is written as -1 for star graphs, so the CSV has the same columns
                             csv_SCCRow(
                                 path, run, results, algCount, data,
@@ -463,11 +503,27 @@ static void runSCCTest(AlgorithmFP* algs, char** algNames, int star, int equal)
 
                         // Compute and print averages for this combination.
                         double** avgResults =
-                            ComputeAvg(results, algCount, TESTRUNS);
+                            ComputeAvg(results, algCount, runs);
 
                         printResults(avgResults, algCount, algNames);
 
-                        for (int f = 0; f < TESTRUNS; ++f) {
+                        if (star) { // average step time between the SCCs (results[run][algCount + i])
+                            printf("Step between the SCCs (avg):\n");
+                            for (int i = 0; i < algCount; ++i) {
+                                double sum = 0;
+                                int cnt = 0;
+                                for (int r = 0; r < runs; ++r)
+                                    if (results[r][algCount + i] >= 0) {
+                                        sum += results[r][algCount + i];
+                                        cnt++;
+                                    }
+                                if (cnt > 0)
+                                    printf("%s: %.4lf\n", algNames[i], sum / cnt);
+                            }
+                            printf("\n");
+                        }
+
+                        for (int f = 0; f < runs; ++f) {
                             free(results[f]);
                         }
                         free(results);
@@ -496,5 +552,5 @@ void Run_RandomSizeSCC_Test(AlgorithmFP* algs, char** algNames)
 
 void Run_StarSCC_Test(AlgorithmFP* algs, char** algNames)
 {
-    runSCCTest(algs, algNames, 1, 0);
+    runSCCTest(algs, algNames, 1, 1);
 }

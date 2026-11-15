@@ -10,6 +10,8 @@
 #include "Tree.h"
 
 
+double SCCStepTime = -1;
+
 tEdge* EE;
 int ee;
 int* firstEE;
@@ -1307,8 +1309,10 @@ static float** SCCvertexOrder(float** graph, int n, const bool alwaysTails, cons
     float** W = copy2DArray(graph, n);
     InitAdjList(n);
     SCCResult SCCs = findSCCs_addEdges(W, n);
-    if (withoutBridges(W, n, SCCs))
+    if (withoutBridges(W, n, SCCs)) {
+        SCCStepTime = 0;
         return W;
+    }
 
     int** last = (int**)malloc(sizeof(int*)*n); // Last node on path (without destination)
     for (int i=0; i<n; i++)
@@ -1322,7 +1326,9 @@ static float** SCCvertexOrder(float** graph, int n, const bool alwaysTails, cons
     Bridges B = tEdgesToVertexRelaxSets(SCCs.component, SCCs.sccCount, n);
 
     separatelyTree(W, n , SCCs, last); // solve APSP in each component with Tree
+    clock_t stepStart = clock();
     AdaptiveBridgeTree(SCCs, B, W, NULL, n, last, alwaysTails, hourglass, alwaysHeads); // APSP between the SCCs
+    SCCStepTime = (double)(clock() - stepStart) / CLOCKS_PER_SEC;
 
     freeBridges(B, n , SCCs.sccCount);
     FreeAdjList(); freeSCCs(SCCs);
@@ -1345,6 +1351,11 @@ float** SCCvertexReverse(float** graph, int n) {
 // Vertex-SCC-hourglass: Vertex-SCC-reverse, the relaxation via tails also prunes the sources along in-trees
 float** SCCvertexHourglass(float** graph, int n) {
     return SCCvertexOrder(graph, n, true, true);
+}
+
+// Vertex-SCC-bridge: always bridge -> heads, without Hourglass (the counterpart of Vertex-SCC-reverse)
+float** SCCvertexBridge(float** graph, int n) {
+    return SCCvertexOrder(graph, n, false, false, true);
 }
 
 // Vertex-SCC-bridgeHG: always bridge -> heads, the bridge step prunes the sources along in-trees (Hourglass)

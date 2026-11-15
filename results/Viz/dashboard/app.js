@@ -60,8 +60,8 @@ function statusFromTime(t, limit) {
   return "ok";
 }
 
-// InstanceLimit in run_algorithm.c: the synthetic limit is per 4096 vertices (120 s for 8192), never less than limit
-const instanceLimit = (limit, n) => Math.max(limit, limit * n / 4096);
+// InstanceLimit in run_algorithm.c: limit up to 4096 vertices, LARGE_INSTANCE_TIME (limits.large) above
+const instanceLimit = (limit, n) => n > 4096 ? (state.limits.large || 3 * limit) : limit;
 
 function addDerived(p) {
   p["tails/heads"] = p.heads ? p.tails / p.heads : NaN;
@@ -101,7 +101,7 @@ function loadRandom(rows, limit) {
   const k2 = new Map();
   for (const i of instances) {
     const p = i.props, comps = Number.isFinite(p.comps) ? p.comps : p.sccCount;
-    if (comps !== 2 || p.componentProb !== 1) continue;
+    if (comps !== 2 || p.componentProb !== 1 || p.outProb === -1) continue; // star runs k = 2 only once
     const key = [p.N, p.outProb, p.inProb].join();
     if (!k2.has(key)) k2.set(key, []);
     k2.get(key).push(i);
@@ -532,7 +532,7 @@ function viewOverview() {
         h("h3", {}, h("span", { class: "sw-dot", style: `background:${colorOf(i.name)}` }), i.name),
         h("p", { class: "small" }, i.text))))),
     panel("Time limit", null, null, prose(
-      `Each algorithm gets <b>${state.limit} s</b> per graph with 4096 vertices and proportionally more on larger graphs (<b>${2 * state.limit} s</b> for 8192)` +
+      `Each algorithm gets <b>${state.limit} s</b> per graph with up to 4096 vertices and <b>${limitOf("large")} s</b> on larger graphs` +
       (() => {
         const other = ["gnutella", "snap"].filter(k => limitOf(k) !== state.limit)
           .map(k => `<b>${limitOf(k)} s</b> for ${KIND_NAMES[k]}`);

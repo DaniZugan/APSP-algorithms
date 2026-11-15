@@ -79,12 +79,17 @@ typedef struct {
     GraphAdjMatrix matrika;
 } GraphDual;
 
+// CPU time (s) of the step between the SCCs in the last SCCvertexOrder-based call (Vertex-SCC, -a, -b, ...),
+// 0 without edges between the SCCs. Other algorithms leave it unchanged (RunAlgorithmTimed sets -1 before each run).
+extern double SCCStepTime;
+
 float** SCCedge(float** graph, int N);
 float** SCCalgo2(float** graph, int N);
 float** SCCvertex(float** graph, int N);
 float** SCCvertexAdaptive(float** graph, int N);
 float** SCCvertexReverse(float** graph, int N);
 float** SCCvertexHourglass(float** graph, int N);
+float** SCCvertexBridge(float** graph, int N);
 float** SCCvertexBridgeHG(float** graph, int N);
 float** SCCvertexNoTree(float** graph, int N);
 float** SCCedgeOrVertex(float** graph, int N);

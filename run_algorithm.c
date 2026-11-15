@@ -77,6 +77,8 @@ int RunAlgorithm(float** graph, int n, double* time, AlgorithmFP alg, int checkO
 
 // Timed runs in a child process ----------------------------------------------------------------------------------------
 
+double LastStepTime = -1;
+
 const char* RunStatusName(RunStatus status)
 {
 	switch (status) {
@@ -185,9 +187,11 @@ RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit,
 
 	if (pid == 0) { // child
 		close(fd[0]);
-		double t = 0;
-		float** mat = RunAlgorithmReturnMatrix(graph, n, &t, alg);
-		writeAll(fd[1], &t, sizeof(t)); // message 1: algorithm finished
+		double t[2] = {0, 0};
+		SCCStepTime = -1;
+		float** mat = RunAlgorithmReturnMatrix(graph, n, &t[0], alg);
+		t[1] = SCCStepTime;
+		writeAll(fd[1], t, sizeof(t)); // message 1: algorithm finished (time, step time between the SCCs)
 
 		int e = check ? check(mat, n, ctx) : 0;
 		if (out != NULL)
@@ -205,8 +209,10 @@ RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit,
 	// parent
 	close(fd[1]);
 	RunStatus status;
-	double t = 0;
-	int r = readWithDeadline(fd[0], &t, sizeof(t), monotonicNow() + limit);
+	double tt[2] = {0, -1};
+	int r = readWithDeadline(fd[0], tt, sizeof(tt), monotonicNow() + limit);
+	double t = tt[0];
+	LastStepTime = (r == 1) ? tt[1] : -1;
 	if (r == 0) {
 		kill(pid, SIGKILL);
 		*time = limit;
@@ -232,6 +238,8 @@ RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit,
 		status = RUN_CRASH;
 	if (status == RUN_CRASH)
 		*time = -1;
+	if (status != RUN_OK && status != RUN_WRONG)
+		LastStepTime = -1;
 
 	return status;
 }
@@ -251,7 +259,9 @@ void FreeSharedMatrix(float* matrix, int n)
 RunStatus RunAlgorithmTimed(float** graph, int n, AlgorithmFP alg, double limit, double* time,
 							CheckFP check, void* ctx, float* out, int* errors)
 {
+	SCCStepTime = -1;
 	float** mat = RunAlgorithmReturnMatrix(graph, n, time, alg);
+	LastStepTime = SCCStepTime;
 	*errors = check ? check(mat, n, ctx) : 0;
 	if (out != NULL)
 		for (int i = 0; i < n; i++)
@@ -287,10 +297,10 @@ static int compareWithReference(float** mat, int n, void* ctx)
 	return diffs;
 }
 
-// Time limit for a synthetic graph with n vertices: MAX_INSTANCE_TIME per LIMIT_BASE_N vertices, at least MAX_INSTANCE_TIME
+// Time limit for a synthetic graph with n vertices (60 s up to 4096 vertices, 180 s above)
 double InstanceLimit(int n)
 {
-	return fmax(MAX_INSTANCE_TIME, MAX_INSTANCE_TIME * n / LIMIT_BASE_N);
+	return n > LIMIT_BASE_N ? LARGE_INSTANCE_TIME : MAX_INSTANCE_TIME;
 }
 
 // Runs all algorithms with the InstanceLimit(n) limit. The first algorithm is the reference the others are checked
@@ -301,6 +311,8 @@ double* RunTest(float** graph, int n, AlgorithmFP* algs, int* mStar)
 }
 
 // RunTest with a time limit of limit seconds for every algorithm.
+// results[i] is the time of algorithm i, results[size + i] its step time between the SCCs (SCCStepTime, -1 if the
+// algorithm does not measure it or did not finish).
 double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, double limit)
 {
 	int size = 0;
@@ -308,15 +320,19 @@ double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, do
 		size++;
 	}
 
-	double* results = (double*)malloc(sizeof(double)*size);
+	double* results = (double*)malloc(sizeof(double)*2*size);
+	for (int i=0; i<size; i++)
+		results[size + i] = -1;
 	*mStar = 0;
 
 	float* refData = CreateSharedMatrix(n); // the reference is computed in a child, which writes it here
 	float** ref = NULL;
 	int errors = 0;
 	RunStatus status = RUN_CRASH;
-	if (refData != NULL)
+	if (refData != NULL) {
 		status = RunAlgorithmTimed(graph, n, algs[0], limit, &(results[0]), NULL, NULL, refData, &errors);
+		results[size] = LastStepTime;
+	}
 	else
 		printf("Cannot allocate the reference matrix\n");
 
@@ -353,6 +369,7 @@ double* RunTestWithLimit(float** graph, int n, AlgorithmFP* algs, int* mStar, do
 	{
 		status = RunAlgorithmTimed(graph, n, algs[i], limit, &(results[i]),
 								   ref ? compareWithReference : NULL, ref, NULL, &errors);
+		results[size + i] = LastStepTime;
 		if (status == RUN_WRONG)
 			printf("Algorithm %d: WRONG, %d entries differ from the reference\n", i, errors);
 		else if (status != RUN_OK)
