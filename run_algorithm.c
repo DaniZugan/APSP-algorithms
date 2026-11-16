@@ -1360,6 +1360,9 @@ void RunGnutellaTest(AlgorithmFP* algs, char** algNames)
 	fclose(csvFile);
 
     for (int z = 0; z < fileCount; ++z) {
+            // 30.txt (n = 36682) does not fit into memory for most algorithms
+            if (strcmp(files[z], "30.txt") == 0)
+                continue;
 
             double** results = (double**)malloc(sizeof(double*)*TESTRUNS);
             for (int run=0; run<TESTRUNS; run++)
