@@ -754,11 +754,14 @@ static float** BridgeTree(const SCCResult Scc, const Bridges B, float** W, const
                 for (int v = 0; v < c;)
                 {
                     int d = dfs[v];             // destinations
-                    if (Wsh + Wh[v] < Ws[d])
+                    const float x = Wsh + Wh[v];
+                    if (x <= Ws[d]) // on a tie the subtree may still improve
                     {
-                        Ws[d] = Wsh + Wh[v];
-                        last[s][d] = last[h][d];
-
+                        if (x < Ws[d])
+                        {
+                            Ws[d] = x;
+                            last[s][d] = last[h][d];
+                        }
                         v++;
                     }
                     else v = skip[v]; // we can skip the subtree since we didn't improve our distance
@@ -844,13 +847,17 @@ static void relaxSource(const int s, const int p, const int c, float** W, int** 
     for (int v = 0; v < c;)
     {
         int d = dfs[v];             // destinations
-        if (Wsp + Wp[v] < Ws[d])
+        const float x = Wsp + Wp[v];
+        if (x <= Ws[d]) // on a tie the subtree may still improve: Ws of its vertices may come from another pivot
         {
-            Ws[d] = Wsp + Wp[v];
-            last[s][d] = last[p][d];
+            if (x < Ws[d])
+            {
+                Ws[d] = x;
+                last[s][d] = last[p][d];
+            }
             v++;
         }
-        else v = skip[v]; // we can skip the subtree since we didn't improve our distance
+        else v = skip[v]; // the path via p is longer, so it is longer for the whole subtree
     }
 }
 
@@ -864,7 +871,7 @@ static void relaxViaPivot(const int p, const int t, const SCCResult Scc, float**
 }
 
 // Hourglass: visits the children s of q in the in-tree of p. S[off .. off+len) are the DFS offsets (in the out-tree
-// of p) that improved for q; s only checks those, skips the subtree of every destination that does not improve, and
+// of p) that improved for q or tied; s only checks those, skips the subtree of every destination that gets longer, and
 // its own subtree in the in-tree if nothing improved.
 static void hourglassVisit(const int q, const int p, const size_t off, const size_t len, float** W, int** last,
                            const TreeBuffers* tb, std::vector<int>& S) {
@@ -880,10 +887,14 @@ static void hourglassVisit(const int q, const int p, const size_t off, const siz
         {
             int v = S[off + j];
             int d = dfs[v];
-            if (Wsp + Wp[v] < Ws[d])
+            const float x = Wsp + Wp[v];
+            if (x <= Ws[d]) // on a tie the children of s may still improve
             {
-                Ws[d] = Wsp + Wp[v];
-                last[s][d] = last[p][d];
+                if (x < Ws[d])
+                {
+                    Ws[d] = x;
+                    last[s][d] = last[p][d];
+                }
                 S.push_back(v);
                 j++;
             }
@@ -953,7 +964,7 @@ static void bridgeStep(const int t, const SCCResult Scc, const Bridges B, float*
 }
 
 // Hourglass in the bridge step: visits the children s of q in the in-tree of tail k. S[off .. off+len) are the
-// indices (in B.tailHead[k]) of the heads that improved for q; s only checks those.
+// indices (in B.tailHead[k]) of the heads that improved for q or tied; s only checks those.
 static void bridgeHourglassVisit(const int q, const int k, const size_t off, const size_t len, const Bridges B,
                                  float** W, int** last, const TreeBuffers* tb, std::vector<int>& S) {
     const float* Wk = W[k];
@@ -967,10 +978,14 @@ static void bridgeHourglassVisit(const int q, const int k, const size_t off, con
         {
             int i = S[off + j];
             int h = heads[i];
-            if (Wsk + Wk[h] < Ws[h])
+            const float x = Wsk + Wk[h];
+            if (x <= Ws[h]) // on a tie the children of s may still improve
             {
-                Ws[h] = Wsk + Wk[h];
-                last[s][h] = last[k][h];
+                if (x < Ws[h])
+                {
+                    Ws[h] = x;
+                    last[s][h] = last[k][h];
+                }
                 S.push_back(i);
             }
         }
